@@ -17,6 +17,7 @@ if __name__ == '__main__':
     osl.log.add_attributes(osl, ["timestamp"])
     osl.log.add_attributes(osl.knee, ["output_position"])
     osl.log.add_attributes(locals(), ["abs_comp_angle","abs_angle","joint_angle"])
-    with osl: 
-        osl.update()
-    pass
+    with osl:
+        osl.knee.set_mode(osl.knee.control_modes.voltage)
+        for t in osl.clock:
+            osl.update()

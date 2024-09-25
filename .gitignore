@@ -1,1 +1,5 @@
 test.py
+DebugLog/*
+*.log
+*.csv
+**/__pycache__/
