@@ -1,15 +1,22 @@
-from picamera2 import Picamera2, Preview
-import cv2
+import sys
+from opensourceleg.osl import OpenSourceLeg
 
-import time
-picam2 = Picamera2()
-camera_config = picam2.create_preview_configuration()
-picam2.configure(camera_config)
-# picam2.start_preview(Preview.DRM)
-picam2.start()
-# time.sleep(2)
-picam2.capture_file(file_output="main.png")
+# Redirect to current folder
+sys.path.append("./")
 
-print(cv2.__version__)
-png_img = cv2.imread("./main.png", cv2.IMREAD_UNCHANGED)
-cv2.imwrite("./main.jpg", png_img, [int(cv2.IMWRITE_JPEG_QUALITY), 100])
+from hardware.futek import Big100NmFutek
+
+# Mechanical Constants
+GR_ACTPACK = 9
+GR_TRANS = 75/11
+GR_BOSTONGEAR = 50
+
+if __name__ == '__main__': 
+    osl = OpenSourceLeg(frequency=200, file_name="osl")
+    osl.add_joint(name="knee", port = "/dev/ttyACM0", gear_ratio=GR_ACTPACK)
+    osl.log.add_attributes(osl, ["timestamp"])
+    osl.log.add_attributes(osl.knee, ["output_position"])
+    osl.log.add_attributes(locals(), ["abs_comp_angle","abs_angle","joint_angle"])
+    with osl: 
+        osl.update()
+    pass
