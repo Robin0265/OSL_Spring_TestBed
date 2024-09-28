@@ -3,3 +3,6 @@ DebugLog/*
 *.log
 *.csv
 __pycache__/
+*.h264
+*.png
+*.jpg
