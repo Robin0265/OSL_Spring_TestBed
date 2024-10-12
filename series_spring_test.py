@@ -26,7 +26,7 @@ if __name__ == '__main__':
     encoder = H264Encoder()
     try: 
         # START RECORDING
-        picam2.start_preview(Preview.DRM)
+        # picam2.start_preview(Preview.DRM)
         picam2.start_recording(encoder, 'test.h264', quality=Quality.HIGH)
         # TODO: ADD FUTEK SENSOR
         # ACTPACK TEST BEGINS
