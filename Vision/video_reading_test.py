@@ -308,9 +308,13 @@ def test(file='first_vido.h264',
     mask = inner_mask = outer_mask = None
     while(cap.isOpened()):
         ret, frame = cap.read()
+        # print("ret=", ret)
+        # print("frame=", frame)
         if ret ==True:
-            frame=frame[:290, 38:603]
-            
+            # frame=frame[25:315, 100:700]
+            # frame=frame[:290, 38:603]
+            frame=frame[:880, 60:1560]
+            # frame=frame[:750, :]
             if mask is None:
                 cv2.imwrite(pre_mask_save_loc, frame)
                 inner_mask = cv2.resize(cv2.imread(inner_mask_loc), frame.shape[1::-1])
