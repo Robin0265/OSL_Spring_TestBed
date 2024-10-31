@@ -16,9 +16,14 @@ GR_ACTPACK = 1                      # Direct actuator
 GR_TRANS = 75/11
 GR_BOSTONGEAR = 50                  # Gear Ratio from Boston Gear
 
-kt = 0.11                           # back emf const
 
 T = 25                              # Period Time
+
+TIME_TO_STEP = 1.0
+FREQUENCY = 200
+DT = 1 / FREQUENCY
+
+k = np.pi/(48*50)
 
 if __name__ == '__main__': 
     osl = OpenSourceLeg(frequency=200, file_name="osl")
@@ -30,7 +35,6 @@ if __name__ == '__main__':
     picam2.configure(picam2.create_video_configuration(main={"size": (1600, 1200)}))
     picam2.set_controls({"FrameRate": 30})
     # picam2.set_controls({"AfMode": controls.AfModeEnum.Auto})
-
     encoder = H264Encoder()
     try: 
         # START RECORDING
@@ -39,27 +43,43 @@ if __name__ == '__main__':
         # TODO: ADD FUTEK SENSOR
         # ACTPACK TEST BEGINS
         osl.knee.start()
-        osl.knee.set_mode(osl.knee.control_modes.voltage)
-        init_pos = osl.knee.output_position
-        voltage = 2000 
+        osl.knee.set_mode(osl.knee.control_modes.position)
+
+        osl.knee.update()
+        pos = osl.knee.output_position
+        init_pos = pos
+        i = 0
         for t in osl.clock:
             
-            osl.knee.set_voltage(value=voltage)
-            osl.log.info(
-                units.convert_from_default(osl.knee.output_position, units.position.rad)
+            pos = pos + k
+            
+            osl.knee.set_position_gains(
+                # kp=200, 
+                # ki=200, 
+                # kd=50, 
             )
-            osl.update()
-
-            if (osl.clock.time()<=T):
-                voltage = 2000
-            elif (osl.clock.time()>T) and (osl.clock.time()<=T*3):
-                voltage = -2000
-            elif (osl.clock.time()>T*3) and (osl.clock.time()<=T*4):
-                voltage = 2000
-            else:
+            osl.knee.set_output_position(position=pos)
+            osl.knee.update()
+            current_pos = osl.knee.output_position
+            
+            # osl.log.info(
+            #     units.convert_from_default(osl.knee.output_position, units.position.rad)
+            # )
+            print("####")
+            print(current_pos)
+            print("----")
+            print(init_pos)
+            
+            # print(current_pos)
+            if (current_pos - init_pos)>np.pi/2:
+                k = -np.pi/(48*50)
+                i = i + 1
+            elif (current_pos - init_pos)<-np.pi/2:
+                k = np.pi/(48*50)
+                i = i + 1
+            if ((int(i/50)==2) & (abs(current_pos - init_pos)<1e-1)):
                 break
 
-            
             
     finally: 
         osl.knee.stop()
