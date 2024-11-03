@@ -128,7 +128,7 @@ def circle_find_3_points(dat, color="red", x0=0, y0=0, point_spacing_deg=45, thr
 
         frame_is_good = abs(x1-x2)>thresh and abs(x2-x3)>thresh and abs(x1-x3)>thresh
         if not frame_is_good:
-            print('frame %d is questionable, so we skip it.'%i)
+            # print('frame %d is questionable, so we skip it.'%i)
             continue
         else:
             good_frames += 1

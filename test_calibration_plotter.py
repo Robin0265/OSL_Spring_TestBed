@@ -130,7 +130,7 @@ def main(cal_folder,inner_mask,outer_mask):
     # Create red_cal and blue_cal if they aren't in folder
     if not os.path.exists('blue_cal.csv') or not os.path.exists('red_cal.csv'):
         print('Do the plot_cal thing')
-        test(file = cal_folder + '/test9.h264',
+        test(file = cal_folder + '/test_1024.h264',
             inner_mask_loc = inner_mask,
             outer_mask_loc = outer_mask,
             pre_mask_save_loc = cal_folder + '/camera_calibration_pre_mask.png',
@@ -161,7 +161,7 @@ def main(cal_folder,inner_mask,outer_mask):
     # Calculate camera_angs 
     if not os.path.exists(cal_folder + '/camera_enabled_angles.csv'):
 
-        blue_cam_angs, red_cam_angs, cam_time = test(file = cal_folder + '/camera_calibration_spring_test.h264',
+        blue_cam_angs, red_cam_angs, cam_time = test(file = cal_folder + '/test_1024.h264',
                                                     inner_mask_loc = inner_mask,
                                                     outer_mask_loc = outer_mask,
                                                     pre_mask_save_loc = cal_folder + '/camera_calibration_pre_mask.png',
@@ -186,9 +186,9 @@ def main(cal_folder,inner_mask,outer_mask):
     blue_enc_angs = stp.theta_1
     enc_time = stp.a0_t
 
-    plt.plot(stp.theta_0)
-    plt.plot(stp.theta_1)
-    plt.show()
+    # plt.plot(stp.theta_0)
+    # plt.plot(stp.theta_1)
+    # plt.show()
 
     # Align the timing based on angle peaks
     pks,_ = find_peaks(red_cam_angs,height=1*np.pi/180,distance=200)
@@ -239,8 +239,8 @@ def main(cal_folder,inner_mask,outer_mask):
     new_cam_time = np.hstack((new_cam_time,end_seg))
     cam_time = new_cam_time
 
-    with open("cam_time_sample2.csv", 'w') as f:
-        np.savetxt(f, new_cam_time, fmt='%.3f', delimiter=", ")
+    # with open("cam_time_sample2.csv", 'w') as f:
+    #     np.savetxt(f, new_cam_time, fmt='%.3f', delimiter=", ")
 
     plt.figure(1)
     plt.plot(cam_time,red_cam_angs,'r')
@@ -299,8 +299,8 @@ if __name__ == '__main__':
     folder = "./cal_folder"
     # test(file=folder+'camera_calibration_spring_test.h264',
     main(cal_folder=folder,
-        inner_mask = "mask_in_1024.png", #None, #folder+'inner_mask0826.png',
-        outer_mask = "mask_out_1024.png" #None, #folder+'outer_mask0826.png',
+        inner_mask = "mask_in_1026.png", #None, #folder+'inner_mask0826.png',
+        outer_mask = "mask_out_1026.png" #None, #folder+'outer_mask0826.png',
         )
     # main(cal_folder='data/08_30_22_T13',
     #         inner_mask = 'inner_mask0830.png',

@@ -227,8 +227,8 @@ class CircleAnnotator():
 
     def annotate_circles(self, frame, gray, color):
         detected_circles = cv2.HoughCircles(gray, 
-                       cv2.HOUGH_GRADIENT, .25, 20, param1 = 60,
-                   param2 = 20, minRadius = 16, maxRadius = 20)
+                       cv2.HOUGH_GRADIENT, .20, 20, param1 = 50,
+                   param2 = 20, minRadius = 50, maxRadius = 54)
         cv2.imshow('gray%d%d%d'%color , gray)
         if detected_circles is not None:
             # print("detected %d circles. Trackers: "%detected_circles.shape[1]+", ".join(["%d"%ct.tracker_index for ct in self.circle_trackers]))
@@ -311,10 +311,7 @@ def test(file='first_vido.h264',
         # print("ret=", ret)
         # print("frame=", frame)
         if ret ==True:
-            # frame=frame[25:315, 100:700]
-            # frame=frame[:290, 38:603]
-            frame=frame[:880, 60:1560]
-            # frame=frame[:750, :]
+            frame=frame[:900, 60:1560]
             if mask is None:
                 cv2.imwrite(pre_mask_save_loc, frame)
                 inner_mask = cv2.resize(cv2.imread(inner_mask_loc), frame.shape[1::-1])
