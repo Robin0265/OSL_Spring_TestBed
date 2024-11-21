@@ -43,7 +43,7 @@ def cumulative_sum(array):
     return array
 
 conversion_to_spring_frame_degrees= lambda x: x/(45.5111*50.)
-ticks_to_motor_radians = lambda x: x*(np.pi/180./45.5111)
+ticks_to_motor_radians = lambda x: x*(1)
 # torque_sensor_callibrated_volts_2_Nm = np.vectorize(lambda x: 1.0014*x+0.0044 if x>=0 else .9998*x + 0.0018)
 torque_sensor_callibrated_volts_2_Nm = np.vectorize(lambda x: 20*x)
 
@@ -76,7 +76,7 @@ class SEATestbedPlotter(object):
 
         self.add_line("a1_t", "pi_time", act1[:,0]-init_pi_time)
         self.add_line("a1_ts", "State time", act1[:,1])
-        self.add_line("a1_x", "Motor enc angle", act1[:,2]-act1[0,2])
+        self.add_line("a1_x", "Motor enc angle", -act1[:,2]+act1[0,2])
         self.add_line("a1_xd", "Motor enc velocity", act1[:,3])
         self.add_line("a1_xdd", "Motor enc acceleration", act1[:,4])  
         self.add_line("a1_vm", "Motor deph voltage", act1[:,5]) 
@@ -118,8 +118,8 @@ class SEATestbedPlotter(object):
         self.add_line("i1_prime", "q-axis current act1 inferred from model", self.v1/R_phase - self.phid_1*K_emf/R_phase)
         self.add_line("v1_prime", "q-axis voltage act1 inferred from model", self.i1*R_phase + self.phid_1*K_emf)
 
-        self.add_line("theta_0", "spring-side angle (dev0), radians", self.phi_0/50.)
-        self.add_line("theta_1", "spring-side angle (dev1), radians", self.phi_1/50.)
+        self.add_line("theta_0", "spring-side angle (dev0), radians", self.phi_0)
+        self.add_line("theta_1", "spring-side angle (dev1), radians", self.phi_1)
         self.add_line("delta_s", "spring-side deflection, radians", self.theta_0-self.theta_1)
 
 
@@ -130,7 +130,7 @@ def main(cal_folder,inner_mask,outer_mask):
     # Create red_cal and blue_cal if they aren't in folder
     if not os.path.exists('blue_cal.csv') or not os.path.exists('red_cal.csv'):
         print('Do the plot_cal thing')
-        test(file = cal_folder + '/test_1024.h264',
+        test(file = cal_folder + '/test_1116.h264',
             inner_mask_loc = inner_mask,
             outer_mask_loc = outer_mask,
             pre_mask_save_loc = cal_folder + '/camera_calibration_pre_mask.png',
@@ -161,15 +161,15 @@ def main(cal_folder,inner_mask,outer_mask):
     # Calculate camera_angs 
     if not os.path.exists(cal_folder + '/camera_enabled_angles.csv'):
 
-        blue_cam_angs, red_cam_angs, cam_time = test(file = cal_folder + '/test_1024.h264',
+        blue_cam_angs, red_cam_angs, cam_time = test(file = cal_folder + '/test_1116.h264',
                                                     inner_mask_loc = inner_mask,
                                                     outer_mask_loc = outer_mask,
                                                     pre_mask_save_loc = cal_folder + '/camera_calibration_pre_mask.png',
                                                     red_cal_save_loc = None,
                                                     blue_cal_save_loc = None)
 
-        blue_cam_angs = -blue_cam_angs + blue_cam_angs[0]
-        red_cam_angs = -red_cam_angs + red_cam_angs[0]
+        blue_cam_angs = blue_cam_angs - blue_cam_angs[0]
+        red_cam_angs = red_cam_angs - red_cam_angs[0]
         cam_enabled_angs = np.vstack((cam_time,blue_cam_angs,red_cam_angs)).T
 
         with open(cal_folder + '/camera_enabled_angles.csv', 'w') as f:
@@ -181,14 +181,16 @@ def main(cal_folder,inner_mask,outer_mask):
         red_cam_angs = cam_enabled_angs[:,2]
 
     # Read encoder_angs from SEA_Testbed_Plotter
-    stp = SEATestbedPlotter(cal_folder + '/camera_calibration_dev0.csv',cal_folder + '/camera_calibration_dev1.csv')
+    stp = SEATestbedPlotter(cal_folder + '/motor_enc_calib_0.csv',cal_folder + '/motor_enc_calib_0.csv')
     red_enc_angs = stp.theta_0
     blue_enc_angs = stp.theta_1
     enc_time = stp.a0_t
 
-    # plt.plot(stp.theta_0)
-    # plt.plot(stp.theta_1)
-    # plt.show()
+    plt.plot(enc_time,red_enc_angs)
+    plt.plot(enc_time,blue_enc_angs)
+    plt.plot(cam_time,red_cam_angs)
+    plt.plot(cam_time,blue_cam_angs)
+    plt.show()
 
     # Align the timing based on angle peaks
     pks,_ = find_peaks(red_cam_angs,height=1*np.pi/180,distance=200)
@@ -299,8 +301,8 @@ if __name__ == '__main__':
     folder = "./cal_folder"
     # test(file=folder+'camera_calibration_spring_test.h264',
     main(cal_folder=folder,
-        inner_mask = "mask_in_1026.png", #None, #folder+'inner_mask0826.png',
-        outer_mask = "mask_out_1026.png" #None, #folder+'outer_mask0826.png',
+        inner_mask = "1116_in.png", #None, #folder+'inner_mask0826.png',
+        outer_mask = "1116_out.png" #None, #folder+'outer_mask0826.png',
         )
     # main(cal_folder='data/08_30_22_T13',
     #         inner_mask = 'inner_mask0830.png',

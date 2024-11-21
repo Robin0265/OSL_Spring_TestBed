@@ -7,8 +7,9 @@ import matplotlib.pyplot as plt
 
 class CircleTracker():
     num_trackers=0
-    def __init__(self, a, b, r, manhattan_threshold=10, radius_threshold=5,
-            disp_color=(0, 255, 0), frame_drop_threshold=30, tracker_update_padding=15,
+    def __init__(self, a, b, r, manhattan_threshold=30, radius_threshold=30,
+            disp_color=(0, 255, 0), frame_drop_threshold=30, tracker_update_padding=30,
+            bound = 285000, 
             cal=None):
         self.a = a
         self.b = b
@@ -23,6 +24,7 @@ class CircleTracker():
         self.tracker_update_padding = tracker_update_padding
         CircleTracker.num_trackers+=1
         self.cal = cal
+        self.bound = bound
 
     def explains(self, a,b,r):
         # uses the manhattan distance and the radius to determine if the detected circle is explained by the existing model.
@@ -76,7 +78,7 @@ class CircleTracker():
 
         M = cv2.moments(self.myimg)
 
-        if M['m00']<200000:
+        if M['m00']<self.bound:
             # acknowledge loss of tracking
             print("loss of tracking for tracker %d"%self.tracker_index)
             self.legitimacy=0.0
@@ -126,7 +128,7 @@ class CircleTracker():
 class CircleAnnotator():
     def __init__(self, x0=283, y0=-110, 
             SinvUT=np.array([[-0.00391323,-0.00050613],[-0.00049765,0.0038477]]),
-            calibration_file_name=None):
+            calibration_file_name=None, ang_span = np.pi/3, jump_ang = np.pi/8):
         self.circle_trackers = []
         self.ndx = 0
         self.calibration_file_name = calibration_file_name
@@ -140,6 +142,8 @@ class CircleAnnotator():
         # exit()
         self.ellipse_def = (np.array([[x0, y0]]).T, SinvUT)
         self.angs_flag = False
+        self.ang_span = ang_span
+        self.jump = jump_ang
 
     def save_cal(self):
         if not (self.calibration_file_name is None):
@@ -170,36 +174,38 @@ class CircleAnnotator():
 
         return c1, c2, pc1, pc2
 
-    def calc_camera_angs(self):
-        circles = np.empty((0,3), float)
-        for ct in self.circle_trackers:
-            circles = np.vstack((circles,np.array([ct.a, ct.b, ct.theta])))
-        if self.ndx == 0:
-            self.angs_abs = np.array([0.0])
-        else:
-            circles = circles[circles[:, 1].argsort()] 
-            c1, c2, pc1, pc2 = self.find_points(circles)
-            del1 = c1 - pc1
-            del2 = c2 - pc2
+    # def calc_camera_angs(self):
+    #     circles = np.empty((0,3), float)
+    #     for ct in self.circle_trackers:
+    #         circles = np.vstack((circles,np.array([ct.a, ct.b, ct.theta])))
+    #     if self.ndx == 0:
+    #         self.angs_abs = np.array([0.0])
+    #     else:
+    #         circles = circles[circles[:, 1].argsort()] 
+    #         c1, c2, pc1, pc2 = self.find_points(circles)
+    #         del1 = c1 - pc1
+    #         del2 = c2 - pc2
             
-            w1 = np.abs(np.pi - c1)
-            w2 = np.abs(np.pi - c2)
-            shift = w2*del1/(w1 + w2) + w1*del2/(w1 + w2)
-            new_ang_abs = shift + self.angs_abs[-1]
+    #         w1 = np.abs(np.pi - c1)
+    #         w2 = np.abs(np.pi - c2)
+    #         shift = w2*del1/(w1 + w2) + w1*del2/(w1 + w2)
+    #         new_ang_abs = shift + self.angs_abs[-1]
 
-            self.angs_abs = np.append(self.angs_abs,new_ang_abs)
+    #         self.angs_abs = np.append(self.angs_abs,new_ang_abs)
             
-        self.prev_circles = circles
+    #     self.prev_circles = circles
 
     def calc_camera_angs(self):
         if len(self.circle_trackers) > 0:
             raw_angs = [ct.theta for ct in self.circle_trackers]
-            weights = [max((1 - abs(ct.theta)*(4/np.pi)),0) for ct in self.circle_trackers]
+            print(raw_angs)
+            weights = [max((1 - abs(ct.theta)*(1/self.ang_span)),0) for ct in self.circle_trackers]
+            print(weights)
             # print(self.circle_trackers)
             normalization = 1./sum(weights)
             # print(np.array(raw_angs)*180./np.pi)
             # print(weights)
-            mod_angles = [np.mod(ct.theta, np.pi/4) for ct in self.circle_trackers]
+            mod_angles = [np.mod(ct.theta, self.ang_span) for ct in self.circle_trackers]
             # print(np.array(mod_angles)*180./np.pi)
             avg_mod_angle = sum([w*θ for w, θ in zip(weights, mod_angles)])*normalization
 
@@ -214,24 +220,30 @@ class CircleAnnotator():
             self.prev_ang = ang
             self.n_rotations = 0
         else:
-            if abs(ang-self.prev_ang)>=np.pi/8: # if we are jumping
+            if abs(ang-self.prev_ang)>=self.jump: # if we are jumping
                 if self.prev_ang>ang: # if we jumped from 45 deg to 0 deg
                     self.n_rotations+=1
                 else: # the opposite jump type
                     self.n_rotations-=1
 
             self.prev_ang = ang
-            ang = ang + self.n_rotations*np.pi/4
+            ang = ang + self.n_rotations*self.ang_span
             self.angs_abs = np.append(self.angs_abs,ang)
 
 
-    def annotate_circles(self, frame, gray, color):
+    def annotate_circles(self, frame, gray, color, minRadius, maxRadius, 
+                            manhattan_threshold=30, radius_threshold=30,
+                            frame_drop_threshold=30, tracker_update_padding=30, bound = 2850000, 
+                            ang_span = np.pi/3):
         detected_circles = cv2.HoughCircles(gray, 
-                       cv2.HOUGH_GRADIENT, .20, 20, param1 = 50,
-                   param2 = 20, minRadius = 50, maxRadius = 54)
+                       cv2.HOUGH_GRADIENT, 2, 500, param1 = 60,
+                   param2 = 20, minRadius = minRadius, maxRadius = maxRadius)
+
+        # print(detected_circles)
         cv2.imshow('gray%d%d%d'%color , gray)
         if detected_circles is not None:
-            # print("detected %d circles. Trackers: "%detected_circles.shape[1]+", ".join(["%d"%ct.tracker_index for ct in self.circle_trackers]))
+            print("detected %d circles. Trackers: "%detected_circles.shape[1]+", ".join(["%d"%ct.tracker_index for ct in self.circle_trackers]))
+            
             for pt in detected_circles[0, :]:
                 (a, b, r) = pt
                 claimed_by_tracker=False
@@ -246,7 +258,11 @@ class CircleAnnotator():
                             # print('updating')
 
                 if not claimed_by_tracker:
-                    ct = CircleTracker(a, b, r, disp_color=color, cal=self.ellipse_def)
+                    ct = CircleTracker(a, b, r, 
+                                        disp_color=color, cal=self.ellipse_def, 
+                                        manhattan_threshold=manhattan_threshold, radius_threshold=radius_threshold,
+                                        frame_drop_threshold=frame_drop_threshold, tracker_update_padding=tracker_update_padding,
+                                        bound = bound)
                     ct.update(self.ndx, a,b,r, frame, gray) # always update once at least
                     print("initializing new tracker", self.ndx, a,b,r)  
                     self.circle_trackers.append(ct)
@@ -294,11 +310,13 @@ def test(file='first_vido.h264',
         red_circle_annotator = CircleAnnotator(
             x0= circle_cal[0,0], y0 = circle_cal[0,1],
             SinvUT = np.array([[circle_cal[0,2], circle_cal[0,3]],
-                                [circle_cal[0,4],  circle_cal[0,5] ]]))
+                                [circle_cal[0,4],  circle_cal[0,5] ]]), 
+                                ang_span=np.pi/180*70, jump_ang=0.5 * np.pi/180*70)   
         blue_circle_annotator = CircleAnnotator(
             x0= circle_cal[1,0], y0 = circle_cal[1,1],
             SinvUT = np.array([[circle_cal[1,2], circle_cal[1,3]],
-                                [circle_cal[1,4],  circle_cal[1,5] ]]))
+                                [circle_cal[1,4],  circle_cal[1,5] ]]), 
+                                ang_span=np.pi/180*70, jump_ang= 0.5 * np.pi/180*70)
     else:
         red_circle_annotator = CircleAnnotator(calibration_file_name=red_cal_save_loc)
         blue_circle_annotator = CircleAnnotator(calibration_file_name=blue_cal_save_loc)
@@ -311,9 +329,9 @@ def test(file='first_vido.h264',
         # print("ret=", ret)
         # print("frame=", frame)
         if ret ==True:
-            frame=frame[:900, 60:1560]
+            frame=frame[:900,:]
             if mask is None:
-                cv2.imwrite(pre_mask_save_loc, frame)
+                # cv2.imwrite(pre_mask_save_loc, frame)
                 inner_mask = cv2.resize(cv2.imread(inner_mask_loc), frame.shape[1::-1])
                 outer_mask = cv2.resize(cv2.imread(outer_mask_loc), frame.shape[1::-1])
                 # mask = cv2.resize(cv2.imread('testbed_mask.png'), frame.shape[1::-1])
@@ -322,14 +340,20 @@ def test(file='first_vido.h264',
             grayframe = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             gray0 = cv2.blur(cv2.threshold(cv2.bitwise_and(grayframe, inner_mask[:,:,0]), 60, 255, cv2.THRESH_BINARY)[1], (5, 5))
             gray2 = cv2.blur(cv2.threshold(cv2.bitwise_and(grayframe, outer_mask[:,:,0]), 60, 255, cv2.THRESH_BINARY)[1], (5, 5))
+            
 
             # hist = cv2.calcHist([frame[:,:, 2]], [0], None, [256], [0, 256])
             # plt.plot( hist)
             # cv2.imshow('gray', gray2)
             # plt.show()
             # exit()
-            blue_circle_annotator.annotate_circles(frame, gray0, (255,0,0))
-            red_circle_annotator.annotate_circles(frame, gray2, (0,0,255))
+            blue_circle_annotator.annotate_circles(frame=frame, gray=gray0, color=(255,0,0), minRadius=63, maxRadius=66, 
+                                                    manhattan_threshold=55, radius_threshold=55, frame_drop_threshold=1, 
+                                                    tracker_update_padding=30, bound=2950000)
+
+            red_circle_annotator.annotate_circles(frame=frame, gray=gray2, color=(0,0,255), minRadius=58, maxRadius=61, 
+                                                    manhattan_threshold=35, radius_threshold=35, frame_drop_threshold=1, 
+                                                    tracker_update_padding=30, bound=2850000)
 
 
             cv2.imshow('Frame', frame)
@@ -349,7 +373,9 @@ def test(file='first_vido.h264',
     if red_circle_annotator.angs_flag or blue_circle_annotator.angs_flag:
         frame_rate = 30
         cam_time = np.linspace(1,red_circle_annotator.ndx,num = red_circle_annotator.ndx)/frame_rate
-
+        # plt.plot(blue_circle_annotator.angs_abs, 'b')
+        # plt.plot(red_circle_annotator.angs_abs, 'r')
+        # plt.show()
         return blue_circle_annotator.angs_abs, red_circle_annotator.angs_abs, cam_time
     else:
         return 0

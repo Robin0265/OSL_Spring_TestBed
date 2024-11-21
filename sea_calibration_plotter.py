@@ -186,8 +186,11 @@ def main(cal_folder,inner_mask,outer_mask):
     blue_enc_angs = stp.theta_1
     enc_time = stp.a0_t
 
-    plt.plot(stp.theta_0)
-    plt.plot(stp.theta_1)
+    plt.plot(cam_time,red_cam_angs,'r')
+    plt.plot(cam_time,blue_cam_angs,'b')
+
+    plt.plot(enc_time,blue_enc_angs,'c')
+    plt.plot(enc_time,red_enc_angs,'m')
     plt.show()
 
     # Align the timing based on angle peaks
@@ -239,8 +242,8 @@ def main(cal_folder,inner_mask,outer_mask):
     new_cam_time = np.hstack((new_cam_time,end_seg))
     cam_time = new_cam_time
 
-    with open("cam_time_sample2.csv", 'w') as f:
-        np.savetxt(f, new_cam_time, fmt='%.3f', delimiter=", ")
+    # with open("cam_time_sample2.csv", 'w') as f:
+    #     np.savetxt(f, new_cam_time, fmt='%.3f', delimiter=", ")
 
     plt.figure(1)
     plt.plot(cam_time,red_cam_angs,'r')
