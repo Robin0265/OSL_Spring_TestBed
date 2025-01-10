@@ -3,7 +3,7 @@ import opensourceleg.tools.units as units
 from opensourceleg.osl import OpenSourceLeg
 # from picamera2 import Picamera2, Preview
 # from picamera2.encoders import H264Encoder, Quality
-from libcamera import controls
+# from libcamera import controls
 import numpy as np
 import time
 
