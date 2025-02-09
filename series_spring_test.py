@@ -23,6 +23,7 @@ T = 10                              # Period Time
 TIME_TO_STEP = 1.0
 FREQUENCY = 200
 DT = 1 / FREQUENCY
+WAIT = 5
 
 k = np.pi/(48*50)
 
@@ -66,20 +67,25 @@ if __name__ == '__main__':
         T = osl.clock.time_since()
         t_0 = 25
         A = 2*np.pi
+        
         for t in osl.clock:
             osl.update()
-            if t < t_0:
-                position_command = A/t_0*t
-            elif t < 3*t_0:
-                position_command = -A/t_0*t + 2*A
-            elif t < 4*t_0:
-                position_command = A/t_0*t - 4*A
+            if t < WAIT:
+                position_command = 0
+            elif t < t_0 + WAIT:
+                position_command = A/t_0*(t-WAIT)
+            elif t < 3*t_0 + WAIT:
+                position_command = -A/t_0*(t-WAIT) + 2*A
+            elif t < 4*t_0 + WAIT:
+                position_command = A/t_0*(t-WAIT) - 4*A
             else:
-                break
+                position_command = 0
+                if t >= 4*t_0 + 2*WAIT:
+                    break
 
             position_command = position_command + init_pos
             osl.knee.set_output_position(position=position_command)
-            osl.log.update()
+            # osl.log.update()
             
     # finally: 
         # picam2.stop_recording()
