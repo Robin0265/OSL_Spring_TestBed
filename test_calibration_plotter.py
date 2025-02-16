@@ -66,7 +66,7 @@ class SEATestbedPlotter(object):
 
         self.add_line("a0_t", "pi_time", act0[:,0]-init_pi_time)
         self.add_line("a0_ts", "State time", act0[:,1])
-        self.add_line("a0_x", "Motor enc angle", act0[:,2]-act0[0,2])
+        self.add_line("a0_x", "Motor enc angle", -act0[:,2]+act0[0,2])
         self.add_line("a0_xd", "Motor enc velocity", act0[:,3])
         self.add_line("a0_xdd", "Motor enc acceleration", act0[:,4])  
         self.add_line("a0_vm", "Motor deph voltage", act0[:,5]) 
@@ -76,7 +76,7 @@ class SEATestbedPlotter(object):
 
         self.add_line("a1_t", "pi_time", act1[:,0]-init_pi_time)
         self.add_line("a1_ts", "State time", act1[:,1])
-        self.add_line("a1_x", "Motor enc angle", -act1[:,2]+act1[0,2])
+        self.add_line("a1_x", "Motor enc angle", act1[:,2]-act1[0,2])
         self.add_line("a1_xd", "Motor enc velocity", act1[:,3])
         self.add_line("a1_xdd", "Motor enc acceleration", act1[:,4])  
         self.add_line("a1_vm", "Motor deph voltage", act1[:,5]) 
@@ -130,7 +130,7 @@ def main(cal_folder,inner_mask,outer_mask):
     # Create red_cal and blue_cal if they aren't in folder
     if not os.path.exists('blue_cal.csv') or not os.path.exists('red_cal.csv'):
         print('Do the plot_cal thing')
-        test(file = cal_folder + '/test_1116.h264',
+        test(file = cal_folder + '/test_0209.h264',
             inner_mask_loc = inner_mask,
             outer_mask_loc = outer_mask,
             pre_mask_save_loc = cal_folder + '/camera_calibration_pre_mask.png',
@@ -161,15 +161,15 @@ def main(cal_folder,inner_mask,outer_mask):
     # Calculate camera_angs 
     if not os.path.exists(cal_folder + '/camera_enabled_angles.csv'):
 
-        blue_cam_angs, red_cam_angs, cam_time = test(file = cal_folder + '/test_1116.h264',
+        blue_cam_angs, red_cam_angs, cam_time = test(file = cal_folder + '/test_0209.h264',
                                                     inner_mask_loc = inner_mask,
                                                     outer_mask_loc = outer_mask,
                                                     pre_mask_save_loc = cal_folder + '/camera_calibration_pre_mask.png',
                                                     red_cal_save_loc = None,
                                                     blue_cal_save_loc = None)
 
-        blue_cam_angs = blue_cam_angs - blue_cam_angs[0]
-        red_cam_angs = red_cam_angs - red_cam_angs[0]
+        blue_cam_angs = - blue_cam_angs + blue_cam_angs[0]
+        red_cam_angs = -red_cam_angs + red_cam_angs[0]
         cam_enabled_angs = np.vstack((cam_time,blue_cam_angs,red_cam_angs)).T
 
         with open(cal_folder + '/camera_enabled_angles.csv', 'w') as f:
@@ -186,15 +186,23 @@ def main(cal_folder,inner_mask,outer_mask):
     blue_enc_angs = stp.theta_1
     enc_time = stp.a0_t
 
-    plt.plot(enc_time,red_enc_angs)
-    plt.plot(enc_time,blue_enc_angs)
-    plt.plot(cam_time,red_cam_angs)
-    plt.plot(cam_time,blue_cam_angs)
+    plt.plot(cam_time,red_cam_angs,'r')
+    plt.plot(cam_time,blue_cam_angs,'b')
+    plt.plot(enc_time,blue_enc_angs,'c')
+    plt.plot(enc_time,red_enc_angs,'m')
+    
+    plt.legend([
+        'red_cam_angs', 'blue_cam_angs',
+        'blue_enc_angs', 'red_enc_angs',
+        # 'red_cam_det', 'red_enc_det',
+        ])
+
+
     plt.show()
 
     # Align the timing based on angle peaks
-    pks,_ = find_peaks(red_cam_angs,height=1*np.pi/180,distance=200)
-    negpks,_ = find_peaks(-red_cam_angs,height=1*np.pi/180,distance=200)
+    pks,_ = find_peaks(red_cam_angs,height=1*np.pi/180,distance=1000)
+    negpks,_ = find_peaks(-red_cam_angs,height=1*np.pi/180,distance=1000)
     print(pks, negpks) # suspciciously, these lists are both empty.
     # negpks[0] = negpks[0] - 1
     red_cam_pks = np.sort(np.hstack((pks,negpks)))
@@ -227,6 +235,10 @@ def main(cal_folder,inner_mask,outer_mask):
     print(cam_time[red_cam_pks])
     print(enc_time[red_enc_pks])
     
+    # Testing Purpose only!!
+    print(red_enc_pks)
+    # red_enc_pks = np.array([1008, 6008, 16010, 21020])
+    
     t_diff = enc_time[red_enc_pks] - cam_time[red_cam_pks]
     if np.max(t_diff) > 0.2:
         print('WARNING: AUTOMATIC TIME ADJUSTMENT SHIFTED BY %.3f SECONDS. PLEASE CHECK THAT IT IS WORKING PROPERLY.'%np.max(t_diff))
@@ -237,11 +249,11 @@ def main(cal_folder,inner_mask,outer_mask):
         new_seg = np.linspace(enc_time[red_enc_pks[i]],enc_time[red_enc_pks[i+1]],red_cam_pks[i+1]-red_cam_pks[i]+1)
         new_cam_time = np.hstack((new_cam_time,new_seg[0:-1]))
 
-    end_seg = cam_time[red_cam_pks[-1]:]
+    end_seg = cam_time[red_cam_pks[-1]:] + t_diff[-1]
     new_cam_time = np.hstack((new_cam_time,end_seg))
     cam_time = new_cam_time
 
-    # with open("cam_time_sample2.csv", 'w') as f:
+    # with open("new_cam_time.csv", 'w') as f:
     #     np.savetxt(f, new_cam_time, fmt='%.3f', delimiter=", ")
 
     plt.figure(1)
@@ -251,8 +263,15 @@ def main(cal_folder,inner_mask,outer_mask):
     plt.plot(enc_time,blue_enc_angs,'c')
     plt.plot(enc_time,red_enc_angs,'m')
 
-    plt.plot(cam_time,red_cam_det)
-    plt.plot(enc_time,red_enc_det)
+    plt.legend([
+        'red_cam_angs', 'blue_cam_angs',
+        'blue_enc_angs', 'red_enc_angs',
+        # 'red_cam_det', 'red_enc_det',
+        ])
+    # plt.plot(cam_time,red_cam_det)
+    # plt.plot(enc_time,red_enc_det)
+
+    plt.show()
 
     # Compare camera_angs and encoder_angs to get inverse_calibration
     blue_cam_rng = blue_cam_angs[np.argmax(blue_cam_angs):np.argmin(blue_cam_angs)]
@@ -275,6 +294,14 @@ def main(cal_folder,inner_mask,outer_mask):
     inv_blue = np.vstack((blue_cam_rng_res,blue_enc_rng)).T
     inv_red = np.vstack((red_cam_rng_res,red_enc_rng)).T
 
+    # plt.legend([
+    #     # 'red_cam_angs', 'blue_cam_angs',
+    #     'Camera Measurement - Outer Ring', 
+    #     'Encoder Measurement - Outer Ring',  
+    #     # 'red_cam_det', 'red_enc_det',
+    #     ])
+    # plt.show()
+
     plt.figure(2)
     plt.plot(blue_cam_rng_res,blue_enc_rng)
     plt.plot(red_cam_rng_res,red_enc_rng)
@@ -283,6 +310,7 @@ def main(cal_folder,inner_mask,outer_mask):
     print('blue linregress: ',slope, intercept, r_value)
     slope, intercept, r_value, p_value, std_err = linregress(red_cam_rng_res,red_enc_rng)
     print('red linregress: ',slope, intercept, r_value)
+    plt.show()
 
     with open(cal_folder + '/inv_blue.csv', 'w') as f:
         np.savetxt(f, inv_blue, fmt='%.7f', delimiter=", ")
@@ -301,8 +329,8 @@ if __name__ == '__main__':
     folder = "./cal_folder"
     # test(file=folder+'camera_calibration_spring_test.h264',
     main(cal_folder=folder,
-        inner_mask = "1116_in.png", #None, #folder+'inner_mask0826.png',
-        outer_mask = "1116_out.png" #None, #folder+'outer_mask0826.png',
+        inner_mask = "mask_inner_0205.png", #None, #folder+'inner_mask0826.png',
+        outer_mask = "mask_outer_0205.png" #None, #folder+'outer_mask0826.png',
         )
     # main(cal_folder='data/08_30_22_T13',
     #         inner_mask = 'inner_mask0830.png',
