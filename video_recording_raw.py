@@ -50,7 +50,7 @@ if __name__ == '__main__':
         # with osl: 
         #     # START RECORDING
         picam2.start_preview(Preview.DRM)
-        picam2.start_recording(encoder, 'test_res.h264')
+        picam2.start_recording(encoder, 'test_modified2.h264')
     
         while True: 
             pass
