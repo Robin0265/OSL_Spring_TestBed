@@ -1,12 +1,10 @@
 # Series Spring Calibration Process
 # Compatible with Pi4B + PiCamera2
 import sys
-import opensourceleg.tools.units as units
 from opensourceleg.osl import OpenSourceLeg
 from picamera2 import Picamera2
 from picamera2.encoders import H264Encoder
 import numpy as np
-import time
 
 # Redirect to current folder
 sys.path.append("./")
@@ -25,7 +23,7 @@ DT = 1 / FREQUENCY
 WAIT = 5
 
 if __name__ == '__main__': 
-    osl = OpenSourceLeg(frequency=200, file_name="osl")
+    osl = OpenSourceLeg(frequency=200, file_name="osl_calib")
     
     osl.clock.report = True
     
@@ -39,15 +37,16 @@ if __name__ == '__main__':
     osl.log.add_attributes(osl.knee, log_info)
     osl.log.add_attributes(osl.ankle, log_info)
 
-    picam2 = Picamera2()
-    picam2.configure(
-            picam2.create_video_configuration(
-                raw={"size":(1640,1232)}, # raw size 
-                main={"size": (640, 480)} # scaled size
-                )
-            )
-    picam2.set_controls({"FrameRate": 30})
-    encoder = H264Encoder()
+    # picam2 = Picamera2()
+    # picam2.configure(
+    #         picam2.create_video_configuration(
+    #             raw={"size":(1640,1232)}, # raw size 
+    #             main={"size": (640, 480)} # scaled size
+    #             )
+    #         )
+    # picam2.set_controls({"FrameRate": 30})
+    # encoder = H264Encoder()
+    # picam2.start_recording(encoder, 'test_modified5.h264')
 
     with osl: 
         osl.knee.start()
@@ -100,4 +99,4 @@ if __name__ == '__main__':
             osl.knee.set_output_position(position=position_command_right)
             osl.ankle.set_output_position(position=position_command_left)
             
-        picam2.stop_recording()
+        # picam2.stop_recording()
