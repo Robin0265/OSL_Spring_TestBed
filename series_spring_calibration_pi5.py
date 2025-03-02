@@ -25,9 +25,11 @@ DT = 1 / FREQUENCY
 WAIT = 5
 
 PIN_FALLING = 6
+PIN_END = 26
 
 GPIO.setmode(GPIO.BCM)
-GPIO.setup(PIN_FALLING, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+GPIO.setup(PIN_FALLING, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+GPIO.setup(PIN_END, GPIO.OUT)
 
 osl = OpenSourceLeg(frequency=200, file_name="osl_calib")
     
@@ -43,19 +45,11 @@ log_info = ["output_position", "output_velocity", "accelx",
 osl.log.add_attributes(osl.knee, log_info)
 osl.log.add_attributes(osl.ankle, log_info)
 
-    # picam2 = Picamera2()
-    # picam2.configure(
-    #         picam2.create_video_configuration(
-    #             raw={"size":(1640,1232)}, # raw size 
-    #             main={"size": (640, 480)} # scaled size
-    #             )
-    #         )
-    # picam2.set_controls({"FrameRate": 30})
-    # encoder = H264Encoder()
-    # picam2.start_recording(encoder, 'test_modified5.h264')
-
-
-def calib_motor_run(channel): 
+try:
+    GPIO.output(PIN_END, GPIO.HIGH)
+    
+    while (GPIO.input(PIN_FALLING)): 
+        time.sleep(1/200)
     
     with osl: 
         osl.knee.start()
@@ -108,14 +102,11 @@ def calib_motor_run(channel):
             osl.knee.set_output_position(position=position_command_right)
             osl.ankle.set_output_position(position=position_command_left)
     
+    GPIO.output(PIN_END, GPIO.LOW)
+    time.sleep(5)  
+except KeyboardInterrupt: 
+    GPIO.cleanup()
     exit()
-
-GPIO.add_event_detect(PIN_FALLING, GPIO.RISING, callback=calib_motor_run, bouncetime=200)
-
-if __name__ == '__main__': 
-    
-    try:
-        while True: 
-            time.sleep(0.001)
-    except KeyboardInterrupt: 
-        exit()
+finally: 
+    GPIO.cleanup()
+    exit()

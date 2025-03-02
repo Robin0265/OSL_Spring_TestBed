@@ -10,5 +10,6 @@
             ],
             "sudo": true
         }
-    ]
+    ],
+    "python.analysis.autoImportCompletions": false
 }
