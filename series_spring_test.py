@@ -29,7 +29,7 @@ PIN_FALLING = 6
 PIN_END = 26
 
 
-osl = OpenSourceLeg(frequency=200, file_name="osl_calib")
+osl = OpenSourceLeg(frequency=500, file_name="osl_calib_3")
     
 osl.clock.report = True
     
@@ -56,17 +56,20 @@ try:
         torque_sensor_thread.start() 
         osl.knee.set_mode(osl.knee.control_modes.position)
         osl.ankle.set_mode(osl.ankle.control_modes.position)
+        
+        # osl.knee.set_mode(osl.knee.control_modes.voltage)
+        # osl.ankle.set_mode(osl.knee.control_modes.voltage)
         osl.knee.set_position_gains(
-            kp = 300, 
+            kp = 400, 
             ki = 150, 
-            kd = 100, 
-            ff = 0,
+            kd = 160, 
+            ff = 150,
         )
         osl.ankle.set_position_gains(
-            kp = 300, 
+            kp = 400, 
             ki = 150, 
-            kd = 100, 
-            ff = 0,
+            kd = 160, 
+            ff = 150,
         )
         osl.knee.update()
         osl.ankle.update()
@@ -80,20 +83,25 @@ try:
         T = osl.clock.time_since()
         t_0 = 25
         A = 2*np.pi
-        
+        voltage_command = 0
         for t in osl.clock:
             tau_futek = torque_sensor_thread.get_latest_torque()
             osl.update()
             if t < WAIT:
                 position_command = 0
+                # voltage_command = 0
             elif t < t_0 + WAIT:
                 position_command = A/t_0*(t-WAIT)
+                # voltage_command = 3000
             elif t < 3*t_0 + WAIT:
                 position_command = -A/t_0*(t-WAIT) + 2*A
+                # voltage_command = -3000
             elif t < 4*t_0 + WAIT:
                 position_command = A/t_0*(t-WAIT) - 4*A
+                # voltage_command = 3000
             else:
                 position_command = 0
+                # voltage_command = 0
                 if t >= 4*t_0 + 2*WAIT:
                     break
             
