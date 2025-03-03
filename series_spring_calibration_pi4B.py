@@ -25,10 +25,10 @@ encoder = H264Encoder()
 
 
 if __name__ == "__main__": 
-    
+    picam2.start_recording(encoder, 'Calib_0303_3.h264')
     GPIO.output(PIN_START, GPIO.LOW)
     try:
-        picam2.start_recording(encoder, 'test_modified6.h264')
+        
         while True:
             time.sleep(1/200)
             if not(GPIO.input(PIN_STOP)):

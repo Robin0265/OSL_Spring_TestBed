@@ -12,6 +12,7 @@ import time
 sys.path.append("./")
 
 from hardware.futek import Big100NmFutek
+from hardware.encoder_correction import TorqueSensorThread
 
 # Mechanical Constants
 GR_ACTPACK = 1                      # Actuator Geabox
@@ -25,9 +26,8 @@ DT = 1 / FREQUENCY
 WAIT = 5
 
 PIN_FALLING = 6
+PIN_END = 26
 
-GPIO.setmode(GPIO.BCM)
-GPIO.setup(PIN_FALLING, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
 osl = OpenSourceLeg(frequency=200, file_name="osl_calib")
     
@@ -36,30 +36,24 @@ osl.clock.report = True
 osl.add_joint(name="knee", port = "/dev/ttyACM1", gear_ratio=GR_ACTPACK*GR_BOSTONGEAR, dephy_log=True)
 osl.add_joint(name="ankle", port = "/dev/ttyACM0", gear_ratio=GR_ACTPACK*GR_BOSTONGEAR, dephy_log=True)
     
+torqueSensor = Big100NmFutek()
+torque_sensor_thread = TorqueSensorThread(torqueSensor, update_interval=1.0/osl._frequency)    
+
 osl.log.add_attributes(osl, ["timestamp", "_frequency"])
 log_info = ["output_position", "output_velocity", "accelx", 
             "motor_voltage", "motor_current", "battery_voltage", 
             "battery_current"]
 osl.log.add_attributes(osl.knee, log_info)
 osl.log.add_attributes(osl.ankle, log_info)
+osl.log.add_attributes(torqueSensor, ["torque"])
+osl.log.add_attributes(locals(), ["freq_command","position_command","torque_command","tau_meas","joint_ang_pre","output_ang_pre","t","i_command","ang_err","ang_err_filt","deflection","deflection_filt","tau_futek","p","intgrl","d"])
 
-    # picam2 = Picamera2()
-    # picam2.configure(
-    #         picam2.create_video_configuration(
-    #             raw={"size":(1640,1232)}, # raw size 
-    #             main={"size": (640, 480)} # scaled size
-    #             )
-    #         )
-    # picam2.set_controls({"FrameRate": 30})
-    # encoder = H264Encoder()
-    # picam2.start_recording(encoder, 'test_modified5.h264')
-
-
-def calib_motor_run(channel): 
+try:
     
     with osl: 
         osl.knee.start()
         osl.ankle.start()
+        torque_sensor_thread.start() 
         osl.knee.set_mode(osl.knee.control_modes.position)
         osl.ankle.set_mode(osl.ankle.control_modes.position)
         osl.knee.set_position_gains(
@@ -88,6 +82,7 @@ def calib_motor_run(channel):
         A = 2*np.pi
         
         for t in osl.clock:
+            tau_futek = torque_sensor_thread.get_latest_torque()
             osl.update()
             if t < WAIT:
                 position_command = 0
@@ -108,14 +103,11 @@ def calib_motor_run(channel):
             osl.knee.set_output_position(position=position_command_right)
             osl.ankle.set_output_position(position=position_command_left)
     
+except KeyboardInterrupt: 
+    torque_sensor_thread.stop()
+    torque_sensor_thread.join()  
     exit()
-
-GPIO.add_event_detect(PIN_FALLING, GPIO.RISING, callback=calib_motor_run, bouncetime=200)
-
-if __name__ == '__main__': 
-    
-    try:
-        while True: 
-            time.sleep(0.001)
-    except KeyboardInterrupt: 
-        exit()
+finally: 
+    torque_sensor_thread.stop()
+    torque_sensor_thread.join()  
+    exit()
