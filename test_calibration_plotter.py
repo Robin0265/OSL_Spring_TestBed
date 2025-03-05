@@ -177,8 +177,8 @@ def main(cal_folder,inner_mask,outer_mask):
     else:
         cam_enabled_angs = np.loadtxt(cal_folder + '/camera_enabled_angles.csv', delimiter=',')
         cam_time = cam_enabled_angs[:,0]
-        blue_cam_angs = -cam_enabled_angs[:,1]
-        red_cam_angs = -cam_enabled_angs[:,2]
+        blue_cam_angs = cam_enabled_angs[:,1]
+        red_cam_angs = cam_enabled_angs[:,2]
 
     # Read encoder_angs from SEA_Testbed_Plotter
     stp = SEATestbedPlotter(cal_folder + '/motor_enc_calib_0.csv',cal_folder + '/motor_enc_calib_0.csv')
