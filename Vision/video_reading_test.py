@@ -76,7 +76,7 @@ class CircleTracker():
 
         M = cv2.moments(self.myimg)
 
-        if M['m00']<220000:
+        if M['m00']<380000:
             # acknowledge loss of tracking
             print("loss of tracking for tracker %d"%self.tracker_index)
             self.legitimacy=0.0
@@ -228,7 +228,7 @@ class CircleAnnotator():
     def annotate_circles(self, frame, gray, color):
         detected_circles = cv2.HoughCircles(gray, 
                        cv2.HOUGH_GRADIENT, .25, 20, param1 = 60,
-                   param2 = 20, minRadius = 18, maxRadius = 22)
+                   param2 = 20, minRadius = 22, maxRadius = 26)
         cv2.imshow('gray%d%d%d'%color , gray)
         if detected_circles is not None:
             # print("detected %d circles. Trackers: "%detected_circles.shape[1]+", ".join(["%d"%ct.tracker_index for ct in self.circle_trackers]))

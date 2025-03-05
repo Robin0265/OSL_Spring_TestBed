@@ -1,3 +1,4 @@
+from operator import neg
 import numpy as np
 import matplotlib.pyplot as plt
 # from model_params import *
@@ -5,9 +6,9 @@ import scipy.io
 from Vision.plot_cal import circle_find_3_points
 from Vision.video_reading_test import test, CircleAnnotator, CircleTracker
 import os.path
+from scipy.signal import argrelextrema
 from scipy.signal import find_peaks
-from scipy.stats import linregress
-
+# from scipy.integrate import cumtrapz
 
 # Model Parameters (tuned here)
 rad_2_enc = 2607.59458762
@@ -43,7 +44,7 @@ def cumulative_sum(array):
     return array
 
 conversion_to_spring_frame_degrees= lambda x: x/(45.5111*50.)
-ticks_to_motor_radians = lambda x: x*(1)
+ticks_to_motor_radians = lambda x: x*(np.pi/180./45.5111)
 # torque_sensor_callibrated_volts_2_Nm = np.vectorize(lambda x: 1.0014*x+0.0044 if x>=0 else .9998*x + 0.0018)
 torque_sensor_callibrated_volts_2_Nm = np.vectorize(lambda x: 20*x)
 
@@ -73,6 +74,7 @@ class SEATestbedPlotter(object):
         self.add_line("a0_im", "Motor deph current", act0[:,6])  
         self.add_line("a0_vb", "Battery deph voltage", act0[:,7])
         self.add_line("a0_ib", "Battery deph current", act0[:,8])
+        self.add_line("tau", "Futek Torque Reading", act0[:, -1])
 
         self.add_line("a1_t", "pi_time", act1[:,0]-init_pi_time)
         self.add_line("a1_ts", "State time", act1[:,1])
@@ -99,7 +101,7 @@ class SEATestbedPlotter(object):
 
     def generate_easy_derived_signals(self):
         if self.has_adc: self.add_line("futek_v", "torque sensor voltage signal", 2*(self.adc_v-self.adc_v[0]))
-        if self.has_adc: self.add_line("tau", "torque sensor torque signal", torque_sensor_callibrated_volts_2_Nm(self.futek_v))
+        # if self.has_adc: self.add_line("tau", "torque sensor torque signal", torque_sensor_callibrated_volts_2_Nm(self.futek_v))
         self.add_line("v0", "q-axis voltage act0", self.a0_vm*1e-3 * np.sqrt(3./2.))
         self.add_line("i0", "q-axis current act0", self.a0_im*1e-3 * .537/np.sqrt(2.))
         self.add_line("v1", "q-axis voltage act1", -self.a1_vm*1e-3 * np.sqrt(3./2.))
@@ -118,93 +120,69 @@ class SEATestbedPlotter(object):
         self.add_line("i1_prime", "q-axis current act1 inferred from model", self.v1/R_phase - self.phid_1*K_emf/R_phase)
         self.add_line("v1_prime", "q-axis voltage act1 inferred from model", self.i1*R_phase + self.phid_1*K_emf)
 
-        self.add_line("theta_0", "spring-side angle (dev0), radians", self.phi_0)
-        self.add_line("theta_1", "spring-side angle (dev1), radians", self.phi_1)
+        self.add_line("theta_0", "spring-side angle (dev0), radians", self.phi_0/50.)
+        self.add_line("theta_1", "spring-side angle (dev1), radians", self.phi_1/50.)
         self.add_line("delta_s", "spring-side deflection, radians", self.theta_0-self.theta_1)
 
 
         self.add_line("tau_m_1", "spring-side angle (dev1), radians", self.i1*K_tau)
 
 
-def main(cal_folder,inner_mask,outer_mask):
-    # Create red_cal and blue_cal if they aren't in folder
-    if not os.path.exists('blue_cal.csv') or not os.path.exists('red_cal.csv'):
-        print('Do the plot_cal thing')
-        test(file = cal_folder + '/Calib_0303_4.h264',
-            inner_mask_loc = inner_mask,
-            outer_mask_loc = outer_mask,
-            pre_mask_save_loc = cal_folder + '/camera_calibration_pre_mask.png',
-            red_cal_save_loc = 'red_cal.csv',
-            blue_cal_save_loc = 'blue_cal.csv')
-
-    # Create circle_cal if not in folder
-    if not os.path.exists('circle_cal.csv'):
-        datb = np.loadtxt('blue_cal.csv', delimiter=',')
-        x0, y0, SinvUT =circle_find_3_points(datb, color='blue')
-        thetas = np.linspace(0,np.pi*2,1000)
-        circ = np.linalg.solve(SinvUT, np.block([[np.cos(thetas)],[np.sin(thetas)]]))+np.array([[x0],[y0]])
-        plt.plot(circ[0,:], circ[1,:],'b')
-        circle_cal1 = np.hstack((np.array([x0, y0]),SinvUT.flatten()))
-
-        datr = np.loadtxt('red_cal.csv', delimiter=',')
-        x0, y0, SinvUT =circle_find_3_points(datr, color='red')
-        thetas = np.linspace(0,np.pi*2,1000)
-        circ = np.linalg.solve(SinvUT, np.block([[np.cos(thetas)],[np.sin(thetas)]]))+np.array([[x0],[y0]])
-        plt.plot(circ[0,:], circ[1,:],'r')
-        circle_cal2 = np.hstack((np.array([x0, y0]),SinvUT.flatten()))
-        circle_cal = np.vstack((circle_cal1,circle_cal2))
-
-        with open('circle_cal.csv', 'w') as f:
-            np.savetxt(f, circle_cal, fmt='%.7f', delimiter=", ")
-        plt.show()
-
+def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='defl_torque.csv'):
     # Calculate camera_angs 
-    if not os.path.exists(cal_folder + '/camera_enabled_angles.csv'):
+    if not os.path.exists(test_folder + 'camera_enabled_angles.csv'):
 
-        blue_cam_angs, red_cam_angs, cam_time = test(file = cal_folder + '/Calib_0303_4.h264',
+        blue_cam_angs, red_cam_angs, cam_time = test(file = test_folder + '/Calib_0303_4.h264',
                                                     inner_mask_loc = inner_mask,
                                                     outer_mask_loc = outer_mask,
-                                                    pre_mask_save_loc = cal_folder + '/camera_calibration_pre_mask.png',
+                                                    pre_mask_save_loc = test_folder + '/camera_enabled_pre_mask.png',
                                                     red_cal_save_loc = None,
                                                     blue_cal_save_loc = None)
-
-        blue_cam_angs = - blue_cam_angs + blue_cam_angs[0]
+        blue_cam_angs = -blue_cam_angs + blue_cam_angs[0]
         red_cam_angs = -red_cam_angs + red_cam_angs[0]
         cam_enabled_angs = np.vstack((cam_time,blue_cam_angs,red_cam_angs)).T
 
-        with open(cal_folder + '/camera_enabled_angles.csv', 'w') as f:
+        with open(test_folder + 'camera_enabled_angles.csv', 'w') as f:
             np.savetxt(f, cam_enabled_angs, fmt='%.7f', delimiter=", ")
+
     else:
-        cam_enabled_angs = np.loadtxt(cal_folder + '/camera_enabled_angles.csv', delimiter=',')
+        cam_enabled_angs = np.loadtxt(test_folder + 'camera_enabled_angles.csv', delimiter=',')
         cam_time = cam_enabled_angs[:,0]
-        blue_cam_angs = -cam_enabled_angs[:,1]
-        red_cam_angs = -cam_enabled_angs[:,2]
+        blue_cam_angs = cam_enabled_angs[:,1]
+        red_cam_angs = cam_enabled_angs[:,2]
+
+    if False: # for viewing tests without camera data
+        stp = SEATestbedPlotter(test_folder + 'camera_enabled_dev0.csv',
+                            test_folder + 'camera_enabled_dev1.csv',
+                            test_folder + 'camera_enabled_volts.csv')
+        red_cam_angs = stp.theta_0
+        blue_cam_angs = stp.theta_1
+        cam_time = stp.a0_t
+
+    if False:
+        stp = SEATestbedPlotter(test_folder + 'camera_enabled_dev0.csv',
+                        test_folder + 'camera_enabled_dev1.csv')
+        red_enc_angs = stp.theta_0
+        blue_enc_angs = stp.theta_1
+        enc_time = stp.a0_t
+        torque = red_enc_angs*0.0
+        trq_time = stp.a0_t
+
 
     # Read encoder_angs from SEA_Testbed_Plotter
-    stp = SEATestbedPlotter(cal_folder + '/motor_enc_calib_0.csv',cal_folder + '/motor_enc_calib_0.csv')
+    stp = SEATestbedPlotter(test_folder + '/motor_enc_calib_0.csv',
+                            test_folder + '/motor_enc_calib_0.csv',
+                            # test_folder + '/camera_enabled_volts.csv'
+                            )
     red_enc_angs = stp.theta_0
     blue_enc_angs = stp.theta_1
     enc_time = stp.a0_t
-
-    plt.plot(cam_time,red_cam_angs,'r')
-    plt.plot(cam_time,blue_cam_angs,'b')
-    plt.plot(enc_time,blue_enc_angs,'c')
-    plt.plot(enc_time,red_enc_angs,'m')
-    
-    plt.legend([
-        'red_cam_angs', 'blue_cam_angs',
-        'blue_enc_angs', 'red_enc_angs',
-        # 'red_cam_det', 'red_enc_det',
-        ])
-
-
-    plt.show()
+    torque = stp.tau
+    trq_time = stp.a0_t
 
     # Align the timing based on angle peaks
-    pks,_ = find_peaks(red_cam_angs,height=1*np.pi/180,distance=1000)
-    negpks,_ = find_peaks(-red_cam_angs,height=1*np.pi/180,distance=1000)
-    print(pks, negpks) # suspciciously, these lists are both empty.
-    # negpks[0] = negpks[0] - 1
+    pks,_ = find_peaks(red_cam_angs,height=1*np.pi/180,distance=200)
+    negpks,_ = find_peaks(-red_cam_angs,height=1*np.pi/180,distance=200)
     red_cam_pks = np.sort(np.hstack((pks,negpks)))
     pks,_ = find_peaks(red_enc_angs,height=1*np.pi/180,distance=1500)
     negpks,_ = find_peaks(-red_enc_angs,height=1*np.pi/180,distance=1500)
@@ -218,7 +196,7 @@ def main(cal_folder,inner_mask,outer_mask):
     cross_ind_cam = np.argwhere(thresh_cross_cam)[:,0]
     grad_cross_cam = np.gradient(cross_ind_cam)
     cam_ends_cross = np.diff(grad_cross_cam > 10*np.mean(grad_cross_cam[0:10]), prepend=False)
-    cam_start_ind = cross_ind_cam[np.argwhere(cam_ends_cross)[0,0]] # this is giving me problems. 
+    cam_start_ind = cross_ind_cam[np.argwhere(cam_ends_cross)[0,0]]
     cam_end_ind = cross_ind_cam[np.argwhere(cam_ends_cross)[-1,0]-1]
 
     cross_ind_enc = np.argwhere(thresh_cross_enc)[:,0]
@@ -226,120 +204,116 @@ def main(cal_folder,inner_mask,outer_mask):
     enc_ends_cross = np.diff(grad_cross_enc > 10*np.mean(grad_cross_enc[0:10]), prepend=False)
     enc_start_ind = cross_ind_enc[np.argwhere(enc_ends_cross)[0,0]]
     enc_end_ind = cross_ind_enc[np.argwhere(enc_ends_cross)[-1,0]-1]
+    # enc_start_ind = 1500
 
     red_cam_pks = np.hstack((cam_start_ind,red_cam_pks,cam_end_ind))
     red_enc_pks = np.hstack((enc_start_ind,red_enc_pks,enc_end_ind))
-    plt.plot(cam_time,blue_cam_angs)
-    plt.plot(cam_time,red_cam_angs)
-    plt.show()
-    print(cam_time[red_cam_pks])
-    print(enc_time[red_enc_pks])
-    
-    # Testing Purpose only!!
-    print(red_enc_pks)
-    # red_enc_pks = np.array([1008, 6008, 16010, 21020])
-    
-    t_diff = enc_time[red_enc_pks] - cam_time[red_cam_pks]
-    if np.max(t_diff) > 0.2:
-        print('WARNING: AUTOMATIC TIME ADJUSTMENT SHIFTED BY %.3f SECONDS. PLEASE CHECK THAT IT IS WORKING PROPERLY.'%np.max(t_diff))
-        print('Time shifts: ',t_diff)
 
-    new_cam_time = cam_time[0:red_cam_pks[0]]
-    for i in range(len(red_cam_pks)-1):
-        new_seg = np.linspace(enc_time[red_enc_pks[i]],enc_time[red_enc_pks[i+1]],red_cam_pks[i+1]-red_cam_pks[i]+1)
-        new_cam_time = np.hstack((new_cam_time,new_seg[0:-1]))
+    # t_diff = enc_time[red_enc_pks] - cam_time[red_cam_pks]
+    # if np.max(t_diff) > 0.2:
+    #     print('WARNING: AUTOMATIC TIME ADJUSTMENT SHIFTED BY %.3f SECONDS. PLEASE CHECK THAT IT IS WORKING PROPERLY.'%np.max(t_diff))
+    #     print('Time shifts: ',t_diff)
 
-    end_seg = cam_time[red_cam_pks[-1]:] + t_diff[-1]
-    new_cam_time = np.hstack((new_cam_time,end_seg))
-    cam_time = new_cam_time
+    # new_cam_time = cam_time[0:red_cam_pks[0]]
+    # for i in range(len(red_cam_pks)-1):
+    #     new_seg = np.linspace(enc_time[red_enc_pks[i]],enc_time[red_enc_pks[i+1]],red_cam_pks[i+1]-red_cam_pks[i]+1)
+    #     new_cam_time = np.hstack((new_cam_time,new_seg[0:-1]))
 
-    # with open("new_cam_time.csv", 'w') as f:
-    #     np.savetxt(f, new_cam_time, fmt='%.3f', delimiter=", ")
+    # end_seg = cam_time[red_cam_pks[-1]:]
+    # new_cam_time = np.hstack((new_cam_time,end_seg))
+    # cam_time = new_cam_time
+
+
+
+    # Second calibration, interpolate cam_angs to enc_angs
+    inv_blue = np.loadtxt(cal_folder + '/inv_blue.csv', delimiter=',')
+    inv_red = np.loadtxt(cal_folder + '/inv_red.csv', delimiter=',')
+    inv_blue = np.flip(inv_blue, axis=0)
+    inv_red = np.flip(inv_red, axis=0)
+
+    blue_cam_ang_cal = np.interp(blue_cam_angs,inv_blue[:,0],inv_blue[:,1])
+    red_cam_ang_cal = np.interp(red_cam_angs,inv_red[:,0],inv_red[:,1])
+
+
+    # Validation thing
+    # red_cam_rng_res = np.interp(enc_time,cam_time,red_cam_angs)
+    # plt.figure(5)
+    # plt.plot(red_cam_rng_res,red_enc_angs)
+    # p = np.polyfit(red_cam_rng_res,red_enc_angs,1)
+    # print("Fit: ",p)
 
     plt.figure(1)
-    plt.plot(cam_time,red_cam_angs,'r')
-    plt.plot(cam_time,blue_cam_angs,'b')
+    plt.plot(cam_time,red_cam_angs*180/np.pi,'r')
+    plt.plot(cam_time,blue_cam_angs*180/np.pi,'b')
 
-    plt.plot(enc_time,blue_enc_angs,'c')
-    plt.plot(enc_time,red_enc_angs,'m')
+    plt.plot(enc_time,blue_enc_angs*180/np.pi,'c')
+    plt.plot(enc_time,red_enc_angs*180/np.pi,'m')
 
-    plt.legend([
-        'red_cam_angs', 'blue_cam_angs',
-        'blue_enc_angs', 'red_enc_angs',
-        # 'red_cam_det', 'red_enc_det',
-        ])
-    # plt.plot(cam_time,red_cam_det)
-    # plt.plot(enc_time,red_enc_det)
+    plt.plot(cam_time,red_cam_ang_cal*180/np.pi,'g')
+    plt.plot(cam_time,blue_cam_ang_cal*180/np.pi,'k')
 
-    plt.show()
+    plt.plot(cam_time,red_cam_det)
+    plt.plot(enc_time,red_enc_det)
 
-    # Compare camera_angs and encoder_angs to get inverse_calibration
-    blue_cam_rng = blue_cam_angs[np.argmax(blue_cam_angs):np.argmin(blue_cam_angs)]
-    blue_enc_rng = blue_enc_angs[np.argmax(blue_enc_angs):np.argmin(blue_enc_angs)]
+    # plt.plot(trq_time,-torque)    
 
-    red_cam_rng = red_cam_angs[np.argmax(red_cam_angs):np.argmin(red_cam_angs)]
-    red_enc_rng = red_enc_angs[np.argmax(red_enc_angs):np.argmin(red_enc_angs)]
+    defl = (blue_cam_ang_cal - red_cam_ang_cal)*180/np.pi
+    torque_res = np.interp(cam_time,trq_time,torque)
+    enc_defl = (blue_enc_angs - red_enc_angs)*180/np.pi
 
-    print('blue: ', np.argmax(blue_cam_angs),np.argmin(blue_cam_angs))
-    cam_time_rng = cam_time[np.argmax(blue_cam_angs):np.argmin(blue_cam_angs)]
-    enc_time_rng = enc_time[np.argmax(blue_enc_angs):np.argmin(blue_enc_angs)]
-    print(cam_time_rng)
-    print(enc_time_rng[0],enc_time_rng[-1])
-    blue_cam_rng_res = np.interp(enc_time_rng,cam_time_rng,blue_cam_rng)
+    defl_torque = np.vstack((defl,torque_res)).T
+    # defl_torque = np.vstack((enc_defl,torque)).T
 
-    cam_time_rng = cam_time[np.argmax(red_cam_angs):np.argmin(red_cam_angs)]
-    enc_time_rng = enc_time[np.argmax(red_enc_angs):np.argmin(red_enc_angs)]
-    red_cam_rng_res = np.interp(enc_time_rng,cam_time_rng,red_cam_rng)
-
-    inv_blue = np.vstack((blue_cam_rng_res,blue_enc_rng)).T
-    inv_red = np.vstack((red_cam_rng_res,red_enc_rng)).T
-
-    # plt.legend([
-    #     # 'red_cam_angs', 'blue_cam_angs',
-    #     'Camera Measurement - Outer Ring', 
-    #     'Encoder Measurement - Outer Ring',  
-    #     # 'red_cam_det', 'red_enc_det',
-    #     ])
-    # plt.show()
+    # plt.figure(2)
+    # plt.plot(cam_time,defl)
+    # plt.plot(enc_time,enc_defl)
 
     plt.figure(2)
-    plt.plot(blue_cam_rng_res,blue_enc_rng)
-    plt.plot(red_cam_rng_res,red_enc_rng)
+    plt.plot(enc_defl,torque)
+    plt.plot(defl,torque_res)
+    plt.legend(['Motor Encoder Measurement','Optical Measurement'])
+    plt.xlabel('Deflection (deg)')
+    plt.ylabel('Torque (Nm)')
 
-    slope, intercept, r_value, p_value, std_err = linregress(blue_cam_rng_res,blue_enc_rng)
-    print('blue linregress: ',slope, intercept, r_value)
-    slope, intercept, r_value, p_value, std_err = linregress(red_cam_rng_res,red_enc_rng)
-    print('red linregress: ',slope, intercept, r_value)
-    plt.show()
+    with open(test_folder + defl_trq_file, 'w') as f:
+        np.savetxt(f, defl_torque, fmt='%.7f', delimiter=", ")
 
-    with open(cal_folder + '/inv_blue.csv', 'w') as f:
-        np.savetxt(f, inv_blue, fmt='%.7f', delimiter=", ")
-    with open(cal_folder + '/inv_red.csv', 'w') as f:
-        np.savetxt(f, inv_red, fmt='%.7f', delimiter=", ")
-
-    plt.figure(3)
-    plt.plot(blue_cam_rng_res,blue_enc_rng-blue_cam_rng_res,'b')
-    plt.plot(red_cam_rng_res,red_enc_rng-red_cam_rng_res,'r')
-    plt.show()
 
 
 if __name__ == '__main__':
-    # root_folder = "/home/gray/wk/nonlinear_spring_data/"
-    # folder = root_folder+"with0springsTake3/"
-    folder = "./cal_folder"
-    # test(file=folder+'camera_calibration_spring_test.h264',
-    main(cal_folder=folder,
-        inner_mask = "mask_inner_0302.png", #None, #folder+'inner_mask0826.png',
-        outer_mask = "mask_outer_0302.png" #None, #folder+'outer_mask0826.png',
-        )
-    # main(cal_folder='data/08_30_22_T13',
+
+    # main(cal_folder='data/08_30_22_T13/',
     #         inner_mask = 'inner_mask0830.png',
-    #         outer_mask = 'outer_mask0830.png')
+    #         outer_mask = 'outer_mask0830.png',
+    #         test_folder='data/09_02_22_T1/',
+    #         defl_trq_file='S4_mencoder.csv')
 
-    # main(cal_folder='data/08_16_22_T1',
+    # main(cal_folder='data/08_30_22_T13/',
+    #         inner_mask = 'inner_mask0830.png',
+    #         outer_mask = 'outer_mask0830.png',
+    #         test_folder='data/09_02_22_T3/',
+    #         defl_trq_file='S4_mencoder.csv')
+
+    # main(cal_folder='data/08_30_22_T13/',
+    #         inner_mask = 'inner_mask0830.png',
+    #         outer_mask = 'outer_mask0830.png',
+    #         test_folder='data/09_02_22_T4/',
+    #         defl_trq_file='S4_mencoder.csv')
+    # plt.legend(['No Lubricant','Graphite Lubricant','Graphite SLOW'])
+
+
+    # main(cal_folder='data/08_16_22_T1/',
     #         inner_mask = 'inner_mask5.png',
-    #         outer_mask = 'outer_mask3.png')
+    #         outer_mask = 'outer_mask3.png',
+    #         test_folder='data/08_16_22_T4/',
+    #         defl_trq_file='S1_14_19.csv')    
 
+    main(cal_folder='./cal_folder',
+            inner_mask = 'mask_inner_0302.png',
+            outer_mask = 'mask_outer_0302.png',
+            test_folder='./meas_folder',
+        )
+    plt.show()
 """
 Bibliography
 walking_knee_78kg.mat
