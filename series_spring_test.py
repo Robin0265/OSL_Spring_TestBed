@@ -38,10 +38,6 @@ DIRECTION = 1
 FLAG = 1
 cnt = 0
 
-VOLT = 2000 # in mV
-DIRECTION = 1
-FLAG = 1
-cnt = 0
 
 osl = OpenSourceLeg(frequency=500, file_name="osl_calib_0314")
 
@@ -49,6 +45,8 @@ osl.clock.report = True
 
 osl.add_joint(name="knee", port = "/dev/ttyACM0", gear_ratio=GR_ACTPACK*GR_BOSTONGEAR, dephy_log=True)
 # osl.add_joint(name="ankle", port = "/dev/ttyACM1", gear_ratio=GR_ACTPACK*GR_BOSTONGEAR, dephy_log=True)
+    
+osl.add_joint(name="knee", port = "/dev/ttyACM0", gear_ratio=GR_ACTPACK*GR_BOSTONGEAR, dephy_log=True)
     
 torqueSensor = Big100NmFutek()
 torque_sensor_thread = TorqueSensorThread(torqueSensor, update_interval=1.0/osl._frequency)    
@@ -81,9 +79,19 @@ try:
         osl.update()
         # init_pos_left = osl.ankle.output_position
         init_pos = osl.knee.output_position
+        osl.knee.set_mode(osl.knee.control_modes.voltage)
+        osl.knee.update()
+        init_pos = osl.knee.output_position
+        # init_pos = pos
+        init_time = osl.clock.time()
+        T = osl.clock.time_since()
         t_0 = 25
         A = 2*np.pi
         voltage_command = VOLT # in Volts
+        voltage_command = 0
+        
+        picam2.start_recording(encoder, 'Calib_0314.h264')
+        
         for t in osl.clock:
             tau_futek = torque_sensor_thread.get_latest_torque()
             osl.update()
