@@ -1,8 +1,7 @@
 import time
 import RPi.GPIO as GPIO
-from picamera2 import Picamera2
+from picamera2 import Picamera2, Preview
 from picamera2.encoders import H264Encoder
-
 
 PIN_START = 4
 PIN_STOP = 5
@@ -22,10 +21,11 @@ picam2.configure(
         )
 picam2.set_controls({"FrameRate": 30})
 encoder = H264Encoder()
-
+picam2.start_preview(Preview.DRM)
 
 if __name__ == "__main__": 
-    picam2.start_recording(encoder, 'Calib_0303_3.h264')
+    picam2.start_recording(encoder, 'Calib_0312.h264')
+    # time.sleep(10)
     GPIO.output(PIN_START, GPIO.LOW)
     try:
         
@@ -34,6 +34,7 @@ if __name__ == "__main__":
             if not(GPIO.input(PIN_STOP)):
                 break
     finally:
+        picam2.stop_preview()
         picam2.stop_recording()
         GPIO.cleanup()
         exit()
