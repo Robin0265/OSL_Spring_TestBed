@@ -11,4 +11,6 @@ __pycache__/
 *.txt
 test.m
 *.db
+*.lgd-nfy0
+
 time_elapse.py

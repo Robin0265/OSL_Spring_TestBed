@@ -33,6 +33,15 @@ DIRECTION = 1
 FLAG = 1
 cnt = 0
 
+VOLT = 2000 # in mV
+DIRECTION = 1
+FLAG = 1
+cnt = 0
+
+VOLT = 2000 # in mV
+DIRECTION = 1
+FLAG = 1
+cnt = 0
 
 osl = OpenSourceLeg(frequency=500, file_name="osl_calib_0314")
 
@@ -74,10 +83,7 @@ try:
         init_pos = osl.knee.output_position
         t_0 = 25
         A = 2*np.pi
-        voltage_command = 0
-        
-        picam2.start_recording(encoder, 'Calib_0314.h264')
-        
+        voltage_command = VOLT # in Volts
         for t in osl.clock:
             tau_futek = torque_sensor_thread.get_latest_torque()
             osl.update()
@@ -111,6 +117,22 @@ try:
             if t > WAIT:
                 break
 
+            current_pos = osl.knee.output_position - init_pos; 
+            if (current_pos > 2 * np.pi and DIRECTION == 1):
+                voltage_command = - VOLT
+                DIRECTION = -1
+                cnt += 1
+            elif (current_pos < -2 * np.pi and DIRECTION == -1):
+                voltage_command = VOLT
+                DIRECTION = 1
+                cnt += 1
+            elif (current_pos > 0 and DIRECTION == 1 and cnt == 2):
+                break
+                 
+            # position_command = -position_command
+            # position_command_right = position_command + init_pos
+            osl.knee.set_voltage(voltage_command)
+    
 except KeyboardInterrupt: 
     
     picam2.stop_preview()
