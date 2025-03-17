@@ -76,7 +76,7 @@ class CircleTracker():
 
         M = cv2.moments(self.myimg)
 
-        if M['m00']<380000:
+        if M['m00']<400000:
             # acknowledge loss of tracking
             print("loss of tracking for tracker %d"%self.tracker_index)
             self.legitimacy=0.0

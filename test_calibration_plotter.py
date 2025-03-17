@@ -130,7 +130,7 @@ def main(cal_folder,inner_mask,outer_mask):
     # Create red_cal and blue_cal if they aren't in folder
     if not os.path.exists('blue_cal.csv') or not os.path.exists('red_cal.csv'):
         print('Do the plot_cal thing')
-        test(file = cal_folder + '/Calib_0303_4.h264',
+        test(file = cal_folder + '/Calib_0312.h264',
             inner_mask_loc = inner_mask,
             outer_mask_loc = outer_mask,
             pre_mask_save_loc = cal_folder + '/camera_calibration_pre_mask.png',
@@ -161,15 +161,15 @@ def main(cal_folder,inner_mask,outer_mask):
     # Calculate camera_angs 
     if not os.path.exists(cal_folder + '/camera_enabled_angles.csv'):
 
-        blue_cam_angs, red_cam_angs, cam_time = test(file = cal_folder + '/Calib_0303_4.h264',
+        blue_cam_angs, red_cam_angs, cam_time = test(file = cal_folder + '/Calib_0312.h264',
                                                     inner_mask_loc = inner_mask,
                                                     outer_mask_loc = outer_mask,
                                                     pre_mask_save_loc = cal_folder + '/camera_calibration_pre_mask.png',
                                                     red_cal_save_loc = None,
                                                     blue_cal_save_loc = None)
 
-        blue_cam_angs = - blue_cam_angs + blue_cam_angs[0]
-        red_cam_angs = -red_cam_angs + red_cam_angs[0]
+        blue_cam_angs = blue_cam_angs - blue_cam_angs[0]
+        red_cam_angs = red_cam_angs - red_cam_angs[0]
         cam_enabled_angs = np.vstack((cam_time,blue_cam_angs,red_cam_angs)).T
 
         with open(cal_folder + '/camera_enabled_angles.csv', 'w') as f:
@@ -182,8 +182,8 @@ def main(cal_folder,inner_mask,outer_mask):
 
     # Read encoder_angs from SEA_Testbed_Plotter
     stp = SEATestbedPlotter(cal_folder + '/motor_enc_calib_0.csv',cal_folder + '/motor_enc_calib_0.csv')
-    red_enc_angs = stp.theta_0
-    blue_enc_angs = stp.theta_1
+    red_enc_angs = - stp.theta_0
+    blue_enc_angs = - stp.theta_1
     enc_time = stp.a0_t
 
     plt.plot(cam_time,red_cam_angs,'r')
@@ -236,7 +236,7 @@ def main(cal_folder,inner_mask,outer_mask):
     print(enc_time[red_enc_pks])
     
     # Testing Purpose only!!
-    print(red_enc_pks)
+    # print(red_enc_pks)
     # red_enc_pks = np.array([1008, 6008, 16010, 21020])
     
     t_diff = enc_time[red_enc_pks] - cam_time[red_cam_pks]

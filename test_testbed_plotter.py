@@ -44,7 +44,7 @@ def cumulative_sum(array):
     return array
 
 conversion_to_spring_frame_degrees= lambda x: x/(45.5111*50.)
-ticks_to_motor_radians = lambda x: x*(np.pi/180./45.5111)
+ticks_to_motor_radians = lambda x: x*(1)
 # torque_sensor_callibrated_volts_2_Nm = np.vectorize(lambda x: 1.0014*x+0.0044 if x>=0 else .9998*x + 0.0018)
 torque_sensor_callibrated_volts_2_Nm = np.vectorize(lambda x: 20*x)
 
@@ -67,7 +67,7 @@ class SEATestbedPlotter(object):
 
         self.add_line("a0_t", "pi_time", act0[:,0]-init_pi_time)
         self.add_line("a0_ts", "State time", act0[:,1])
-        self.add_line("a0_x", "Motor enc angle", -act0[:,2]+act0[0,2])
+        self.add_line("a0_x", "Motor enc angle", act0[:,2]-act0[0,2])
         self.add_line("a0_xd", "Motor enc velocity", act0[:,3])
         self.add_line("a0_xdd", "Motor enc acceleration", act0[:,4])  
         self.add_line("a0_vm", "Motor deph voltage", act0[:,5]) 
@@ -78,7 +78,7 @@ class SEATestbedPlotter(object):
 
         self.add_line("a1_t", "pi_time", act1[:,0]-init_pi_time)
         self.add_line("a1_ts", "State time", act1[:,1])
-        self.add_line("a1_x", "Motor enc angle", act1[:,2]-act1[0,2])
+        self.add_line("a1_x", "Motor enc angle", -act1[:,2]+act1[0,2])
         self.add_line("a1_xd", "Motor enc velocity", act1[:,3])
         self.add_line("a1_xdd", "Motor enc acceleration", act1[:,4])  
         self.add_line("a1_vm", "Motor deph voltage", act1[:,5]) 
@@ -120,33 +120,33 @@ class SEATestbedPlotter(object):
         self.add_line("i1_prime", "q-axis current act1 inferred from model", self.v1/R_phase - self.phid_1*K_emf/R_phase)
         self.add_line("v1_prime", "q-axis voltage act1 inferred from model", self.i1*R_phase + self.phid_1*K_emf)
 
-        self.add_line("theta_0", "spring-side angle (dev0), radians", self.phi_0/50.)
-        self.add_line("theta_1", "spring-side angle (dev1), radians", self.phi_1/50.)
+        self.add_line("theta_0", "spring-side angle (dev0), radians", self.phi_0)
+        self.add_line("theta_1", "spring-side angle (dev1), radians", self.phi_1)
         self.add_line("delta_s", "spring-side deflection, radians", self.theta_0-self.theta_1)
 
 
         self.add_line("tau_m_1", "spring-side angle (dev1), radians", self.i1*K_tau)
 
 
-def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='defl_torque.csv'):
+def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torque.csv'):
     # Calculate camera_angs 
-    if not os.path.exists(test_folder + 'camera_enabled_angles.csv'):
+    if not os.path.exists(test_folder + '/camera_enabled_angles.csv'):
 
-        blue_cam_angs, red_cam_angs, cam_time = test(file = test_folder + '/Calib_0303_4.h264',
+        blue_cam_angs, red_cam_angs, cam_time = test(file = test_folder + '/Calib_0314.h264',
                                                     inner_mask_loc = inner_mask,
                                                     outer_mask_loc = outer_mask,
                                                     pre_mask_save_loc = test_folder + '/camera_enabled_pre_mask.png',
                                                     red_cal_save_loc = None,
                                                     blue_cal_save_loc = None)
-        blue_cam_angs = -blue_cam_angs + blue_cam_angs[0]
-        red_cam_angs = -red_cam_angs + red_cam_angs[0]
+        blue_cam_angs = blue_cam_angs - blue_cam_angs[0]
+        red_cam_angs = red_cam_angs - red_cam_angs[0]
         cam_enabled_angs = np.vstack((cam_time,blue_cam_angs,red_cam_angs)).T
 
-        with open(test_folder + 'camera_enabled_angles.csv', 'w') as f:
+        with open(test_folder + '/camera_enabled_angles.csv', 'w') as f:
             np.savetxt(f, cam_enabled_angs, fmt='%.7f', delimiter=", ")
 
     else:
-        cam_enabled_angs = np.loadtxt(test_folder + 'camera_enabled_angles.csv', delimiter=',')
+        cam_enabled_angs = np.loadtxt(test_folder + '/camera_enabled_angles.csv', delimiter=',')
         cam_time = cam_enabled_angs[:,0]
         blue_cam_angs = cam_enabled_angs[:,1]
         red_cam_angs = cam_enabled_angs[:,2]
@@ -181,8 +181,10 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='defl_torque
     trq_time = stp.a0_t
 
     # Align the timing based on angle peaks
-    pks,_ = find_peaks(red_cam_angs,height=1*np.pi/180,distance=200)
-    negpks,_ = find_peaks(-red_cam_angs,height=1*np.pi/180,distance=200)
+    pks,_ = find_peaks(red_cam_angs,height=1*np.pi/180,distance=500)
+    negpks,_ = find_peaks(-red_cam_angs,height=1*np.pi/180,distance=500)
+    print(pks, negpks) # suspciciously, these lists are both empty.
+    # negpks[0] = negpks[0] - 1
     red_cam_pks = np.sort(np.hstack((pks,negpks)))
     pks,_ = find_peaks(red_enc_angs,height=1*np.pi/180,distance=1500)
     negpks,_ = find_peaks(-red_enc_angs,height=1*np.pi/180,distance=1500)
@@ -196,7 +198,7 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='defl_torque
     cross_ind_cam = np.argwhere(thresh_cross_cam)[:,0]
     grad_cross_cam = np.gradient(cross_ind_cam)
     cam_ends_cross = np.diff(grad_cross_cam > 10*np.mean(grad_cross_cam[0:10]), prepend=False)
-    cam_start_ind = cross_ind_cam[np.argwhere(cam_ends_cross)[0,0]]
+    cam_start_ind = cross_ind_cam[np.argwhere(cam_ends_cross)[0,0]] # this is giving me problems. 
     cam_end_ind = cross_ind_cam[np.argwhere(cam_ends_cross)[-1,0]-1]
 
     cross_ind_enc = np.argwhere(thresh_cross_enc)[:,0]
@@ -204,10 +206,20 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='defl_torque
     enc_ends_cross = np.diff(grad_cross_enc > 10*np.mean(grad_cross_enc[0:10]), prepend=False)
     enc_start_ind = cross_ind_enc[np.argwhere(enc_ends_cross)[0,0]]
     enc_end_ind = cross_ind_enc[np.argwhere(enc_ends_cross)[-1,0]-1]
-    # enc_start_ind = 1500
 
     red_cam_pks = np.hstack((cam_start_ind,red_cam_pks,cam_end_ind))
     red_enc_pks = np.hstack((enc_start_ind,red_enc_pks,enc_end_ind))
+    plt.plot(cam_time,blue_cam_angs)
+    plt.plot(cam_time,red_cam_angs)
+    plt.plot(enc_time, blue_enc_angs)
+    plt.plot(enc_time, red_enc_angs)
+    plt.show()
+    # print(cam_time[red_cam_pks])
+    # print(enc_time[red_enc_pks])
+
+    # red_cam_pks = np.hstack((cam_start_ind,red_cam_pks,cam_end_ind))
+    # red_enc_pks = np.hstack((enc_start_ind,red_enc_pks,enc_end_ind))
+
 
     # t_diff = enc_time[red_enc_pks] - cam_time[red_cam_pks]
     # if np.max(t_diff) > 0.2:
@@ -219,10 +231,9 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='defl_torque
     #     new_seg = np.linspace(enc_time[red_enc_pks[i]],enc_time[red_enc_pks[i+1]],red_cam_pks[i+1]-red_cam_pks[i]+1)
     #     new_cam_time = np.hstack((new_cam_time,new_seg[0:-1]))
 
-    # end_seg = cam_time[red_cam_pks[-1]:]
+    # end_seg = cam_time[red_cam_pks[-1]:] + t_diff[-1]
     # new_cam_time = np.hstack((new_cam_time,end_seg))
     # cam_time = new_cam_time
-
 
 
     # Second calibration, interpolate cam_angs to enc_angs
@@ -234,14 +245,23 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='defl_torque
     blue_cam_ang_cal = np.interp(blue_cam_angs,inv_blue[:,0],inv_blue[:,1])
     red_cam_ang_cal = np.interp(red_cam_angs,inv_red[:,0],inv_red[:,1])
 
-
+    red_cam_ang_cal_res = np.interp(enc_time[red_enc_pks[0]:red_enc_pks[-1]], cam_time[red_cam_pks[0]:red_cam_pks[-1]], red_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]])
+    blue_cam_ang_cal_res = np.interp(enc_time[red_enc_pks[0]:red_enc_pks[-1]], cam_time[red_cam_pks[0]:red_cam_pks[-1]], blue_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]])
+    
+    red_enc_ang_res = np.interp(cam_time[red_cam_pks[0]:red_cam_pks[-1]], enc_time[red_enc_pks[0]:red_enc_pks[-1]], red_enc_angs[red_enc_pks[0]:red_enc_pks[-1]])
+    blue_enc_ang_res = np.interp(cam_time[red_cam_pks[0]:red_cam_pks[-1]], enc_time[red_enc_pks[0]:red_enc_pks[-1]], blue_enc_angs[red_enc_pks[0]:red_enc_pks[-1]])
     # Validation thing
     # red_cam_rng_res = np.interp(enc_time,cam_time,red_cam_angs)
-    # plt.figure(5)
-    # plt.plot(red_cam_rng_res,red_enc_angs)
+    plt.figure(5)
+    plt.plot(enc_time[red_enc_pks[0]:red_enc_pks[-1]],red_cam_ang_cal_res - red_enc_angs[red_enc_pks[0]:red_enc_pks[-1]], 'r')
+    plt.plot(enc_time[red_enc_pks[0]:red_enc_pks[-1]],blue_cam_ang_cal_res - blue_enc_angs[red_enc_pks[0]:red_enc_pks[-1]], 'b')
     # p = np.polyfit(red_cam_rng_res,red_enc_angs,1)
     # print("Fit: ",p)
-
+    
+    plt.figure(6)
+    plt.plot(cam_time[red_cam_pks[0]:red_cam_pks[-1]],red_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]] - red_enc_ang_res, 'r')
+    plt.plot(cam_time[red_cam_pks[0]:red_cam_pks[-1]],blue_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]] - blue_enc_ang_res, 'b')
+    
     plt.figure(1)
     plt.plot(cam_time,red_cam_angs*180/np.pi,'r')
     plt.plot(cam_time,blue_cam_angs*180/np.pi,'b')

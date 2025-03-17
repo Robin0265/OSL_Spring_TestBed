@@ -8,7 +8,7 @@ from Vision.video_reading import test, CircleAnnotator, CircleTracker
 import os.path
 from scipy.signal import argrelextrema
 from scipy.signal import find_peaks
-from scipy.integrate import cumtrapz
+from scipy.integrate import cumulative_trapezoid
 
 # Model Parameters (tuned here)
 rad_2_enc = 2607.59458762
@@ -131,7 +131,7 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='defl_torque
     # Calculate camera_angs 
     if not os.path.exists(test_folder + 'camera_enabled_angles.csv'):
 
-        blue_cam_angs, red_cam_angs, cam_time = test(file = test_folder + '/camera_enabled_spring_test.h264',
+        blue_cam_angs, red_cam_angs, cam_time = test(file = './cal_folder/camera_calibration_spring_test.h264',
                                                     inner_mask_loc = inner_mask,
                                                     outer_mask_loc = outer_mask,
                                                     pre_mask_save_loc = test_folder + '/camera_enabled_pre_mask.png',
@@ -169,8 +169,8 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='defl_torque
 
 
     # Read encoder_angs from SEA_Testbed_Plotter
-    stp = SEATestbedPlotter(test_folder + '/camera_enabled_dev0.csv',
-                            test_folder + '/camera_enabled_dev1.csv',
+    stp = SEATestbedPlotter('./cal_folder/camera_calibration_dev0.csv',
+                            './cal_folder/camera_calibration_dev1.csv',
                             test_folder + '/camera_enabled_volts.csv')
     red_enc_angs = stp.theta_0
     blue_enc_angs = stp.theta_1
@@ -234,11 +234,19 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='defl_torque
 
 
     # Validation thing
-    # red_cam_rng_res = np.interp(enc_time,cam_time,red_cam_angs)
+    red_cam_rng_res = np.interp(enc_time,cam_time,red_cam_ang_cal)
+    blue_cam_rng_res = np.interp(enc_time, cam_time, blue_cam_ang_cal)
     # plt.figure(5)
     # plt.plot(red_cam_rng_res,red_enc_angs)
     # p = np.polyfit(red_cam_rng_res,red_enc_angs,1)
     # print("Fit: ",p)
+    
+    plt.figure(6)
+    plt.plot(enc_time, (red_cam_rng_res - red_enc_angs) * 180 / np.pi)
+    plt.plot(enc_time, (blue_cam_rng_res - blue_enc_angs) * 180 / np.pi)
+    plt.legend([
+        'red_cam_rng_res - red_enc_angs', 'blue_cam_rng_res - blue_enc_angs', 
+    ])
 
     plt.figure(1)
     plt.plot(cam_time,red_cam_angs*180/np.pi,'r')
@@ -266,12 +274,24 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='defl_torque
     # plt.plot(cam_time,defl)
     # plt.plot(enc_time,enc_defl)
 
+    # plt.figure(2)
+    # plt.plot(enc_defl,torque)
+    # plt.plot(defl,torque_res)
+    # plt.legend(['Motor Encoder Measurement','Optical Measurement'])
+    # plt.xlabel('Deflection (deg)')
+    # plt.ylabel('Torque (Nm)')
+    
+    red_enc_angs_res = np.interp(cam_time, enc_time, red_enc_angs)
+    blue_enc_angs_res = np.interp(cam_time, enc_time, blue_enc_angs)
+
+    
     plt.figure(2)
-    plt.plot(enc_defl,torque)
-    plt.plot(defl,torque_res)
-    plt.legend(['Motor Encoder Measurement','Optical Measurement'])
-    plt.xlabel('Deflection (deg)')
-    plt.ylabel('Torque (Nm)')
+    plt.plot(cam_time, red_cam_ang_cal*180/np.pi - red_enc_angs_res*180/np.pi, 'r')
+    plt.plot(cam_time, blue_cam_ang_cal*180/np.pi - blue_enc_angs_res*180/np.pi, 'b')
+    plt.legend([
+        'red_cam_ang_cal - red_enc_angs', 'blue_cam_ang_cal - blue_enc_angs', 
+    ])
+    plt.show()
 
     with open(test_folder + defl_trq_file, 'w') as f:
         np.savetxt(f, defl_torque, fmt='%.7f', delimiter=", ")
