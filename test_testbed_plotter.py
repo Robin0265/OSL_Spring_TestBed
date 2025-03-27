@@ -78,7 +78,7 @@ class SEATestbedPlotter(object):
 
         self.add_line("a1_t", "pi_time", act1[:,0]-init_pi_time)
         self.add_line("a1_ts", "State time", act1[:,1])
-        self.add_line("a1_x", "Motor enc angle", -act1[:,2]+act1[0,2])
+        self.add_line("a1_x", "Motor enc angle", -act1[:,2]+act1[:,2])
         self.add_line("a1_xd", "Motor enc velocity", act1[:,3])
         self.add_line("a1_xdd", "Motor enc acceleration", act1[:,4])  
         self.add_line("a1_vm", "Motor deph voltage", act1[:,5]) 
@@ -132,7 +132,7 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     # Calculate camera_angs 
     if not os.path.exists(test_folder + '/camera_enabled_angles.csv'):
 
-        blue_cam_angs, red_cam_angs, cam_time = test(file = test_folder + '/Calib_0314.h264',
+        blue_cam_angs, red_cam_angs, cam_time = test(file = test_folder + '/Stiffness_Measure_250326_164341.h264',
                                                     inner_mask_loc = inner_mask,
                                                     outer_mask_loc = outer_mask,
                                                     pre_mask_save_loc = test_folder + '/camera_enabled_pre_mask.png',
@@ -245,22 +245,34 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     blue_cam_ang_cal = np.interp(blue_cam_angs,inv_blue[:,0],inv_blue[:,1])
     red_cam_ang_cal = np.interp(red_cam_angs,inv_red[:,0],inv_red[:,1])
 
-    red_cam_ang_cal_res = np.interp(enc_time[red_enc_pks[0]:red_enc_pks[-1]], cam_time[red_cam_pks[0]:red_cam_pks[-1]], red_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]])
-    blue_cam_ang_cal_res = np.interp(enc_time[red_enc_pks[0]:red_enc_pks[-1]], cam_time[red_cam_pks[0]:red_cam_pks[-1]], blue_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]])
+    red_cam_ang_cal_res = np.interp(enc_time[red_enc_pks[0]:red_enc_pks[-1]], 
+                                    cam_time[red_cam_pks[0]:red_cam_pks[-1]], 
+                                    red_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]])
+    blue_cam_ang_cal_res = np.interp(enc_time[red_enc_pks[0]:red_enc_pks[-1]], 
+                                     cam_time[red_cam_pks[0]:red_cam_pks[-1]], 
+                                     blue_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]])
     
-    red_enc_ang_res = np.interp(cam_time[red_cam_pks[0]:red_cam_pks[-1]], enc_time[red_enc_pks[0]:red_enc_pks[-1]], red_enc_angs[red_enc_pks[0]:red_enc_pks[-1]])
-    blue_enc_ang_res = np.interp(cam_time[red_cam_pks[0]:red_cam_pks[-1]], enc_time[red_enc_pks[0]:red_enc_pks[-1]], blue_enc_angs[red_enc_pks[0]:red_enc_pks[-1]])
+    red_enc_ang_res = np.interp(cam_time[red_cam_pks[0]:red_cam_pks[-1]], 
+                                enc_time[red_enc_pks[0]:red_enc_pks[-1]], 
+                                red_enc_angs[red_enc_pks[0]:red_enc_pks[-1]])
+    blue_enc_ang_res = np.interp(cam_time[red_cam_pks[0]:red_cam_pks[-1]], 
+                                 enc_time[red_enc_pks[0]:red_enc_pks[-1]], 
+                                 blue_enc_angs[red_enc_pks[0]:red_enc_pks[-1]])
     # Validation thing
     # red_cam_rng_res = np.interp(enc_time,cam_time,red_cam_angs)
-    plt.figure(5)
-    plt.plot(enc_time[red_enc_pks[0]:red_enc_pks[-1]],red_cam_ang_cal_res - red_enc_angs[red_enc_pks[0]:red_enc_pks[-1]], 'r')
-    plt.plot(enc_time[red_enc_pks[0]:red_enc_pks[-1]],blue_cam_ang_cal_res - blue_enc_angs[red_enc_pks[0]:red_enc_pks[-1]], 'b')
+    # plt.figure(5)
+    # plt.plot(enc_time[red_enc_pks[0]:red_enc_pks[-1]], 
+    #          red_cam_ang_cal_res - red_enc_angs[red_enc_pks[0]:red_enc_pks[-1]], 'r')
+    # plt.plot(enc_time[red_enc_pks[0]:red_enc_pks[-1]], 
+    #          blue_cam_ang_cal_res - blue_enc_angs[red_enc_pks[0]:red_enc_pks[-1]], 'b')
     # p = np.polyfit(red_cam_rng_res,red_enc_angs,1)
     # print("Fit: ",p)
     
     plt.figure(6)
-    plt.plot(cam_time[red_cam_pks[0]:red_cam_pks[-1]],red_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]] - red_enc_ang_res, 'r')
-    plt.plot(cam_time[red_cam_pks[0]:red_cam_pks[-1]],blue_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]] - blue_enc_ang_res, 'b')
+    plt.plot(cam_time[red_cam_pks[0]:red_cam_pks[-1]], 
+             red_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]] - red_enc_ang_res, 'r')
+    plt.plot(cam_time[red_cam_pks[0]:red_cam_pks[-1]],
+             blue_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]] - blue_enc_ang_res, 'b')
     
     plt.figure(1)
     plt.plot(cam_time,red_cam_angs*180/np.pi,'r')
@@ -277,8 +289,8 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
 
     # plt.plot(trq_time,-torque)    
 
-    defl = (blue_cam_ang_cal - red_cam_ang_cal)*180/np.pi
-    torque_res = np.interp(cam_time,trq_time,torque)
+    defl = (- blue_cam_ang_cal + red_cam_ang_cal)*180/np.pi
+    torque_res = np.interp(cam_time, trq_time, torque)
     enc_defl = (blue_enc_angs - red_enc_angs)*180/np.pi
 
     defl_torque = np.vstack((defl,torque_res)).T
@@ -329,8 +341,8 @@ if __name__ == '__main__':
     #         defl_trq_file='S1_14_19.csv')    
 
     main(cal_folder='./cal_folder',
-            inner_mask = 'mask_inner_0302.png',
-            outer_mask = 'mask_outer_0302.png',
+            inner_mask = 'inner_mask_0326.png',
+            outer_mask = 'outer_mask_0326.png',
             test_folder='./meas_folder',
         )
     plt.show()
