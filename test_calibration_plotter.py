@@ -186,6 +186,7 @@ def main(cal_folder,inner_mask,outer_mask):
     blue_enc_angs = - stp.theta_1
     enc_time = stp.a0_t
 
+    plt.figure(1)
     plt.plot(cam_time,red_cam_angs,'r')
     plt.plot(cam_time,blue_cam_angs,'b')
     plt.plot(enc_time,blue_enc_angs,'c')
@@ -197,8 +198,6 @@ def main(cal_folder,inner_mask,outer_mask):
         # 'red_cam_det', 'red_enc_det',
         ])
 
-
-    plt.show()
 
     # Align the timing based on angle peaks
     pks,_ = find_peaks(red_cam_angs,height=1*np.pi/180,distance=1000)
@@ -229,39 +228,46 @@ def main(cal_folder,inner_mask,outer_mask):
 
     red_cam_pks = np.hstack((cam_start_ind,red_cam_pks,cam_end_ind))
     red_enc_pks = np.hstack((enc_start_ind,red_enc_pks,enc_end_ind))
-    plt.plot(cam_time,blue_cam_angs)
-    plt.plot(cam_time,red_cam_angs)
-    plt.show()
+    # plt.plot(cam_time,blue_cam_angs)
+    # plt.plot(cam_time,red_cam_angs)
+    # plt.show()
     print(cam_time[red_cam_pks])
     print(enc_time[red_enc_pks])
     
-    # Testing Purpose only!!
-    # print(red_enc_pks)
-    # red_enc_pks = np.array([1008, 6008, 16010, 21020])
     
-    t_diff = enc_time[red_enc_pks] - cam_time[red_cam_pks]
-    if np.max(t_diff) > 0.2:
-        print('WARNING: AUTOMATIC TIME ADJUSTMENT SHIFTED BY %.3f SECONDS. PLEASE CHECK THAT IT IS WORKING PROPERLY.'%np.max(t_diff))
-        print('Time shifts: ',t_diff)
+    # OLD LOGICS FOR TIME SHIFT, DISABLED
+    
+    # t_diff = enc_time[red_enc_pks] - cam_time[red_cam_pks]
+    # if np.max(t_diff) > 0.2:
+    #     print('WARNING: AUTOMATIC TIME ADJUSTMENT SHIFTED BY %.3f SECONDS. PLEASE CHECK THAT IT IS WORKING PROPERLY.'%np.max(t_diff))
+    #     print('Time shifts: ',t_diff)
 
-    new_cam_time = cam_time[0:red_cam_pks[0]]
-    for i in range(len(red_cam_pks)-1):
-        new_seg = np.linspace(enc_time[red_enc_pks[i]],enc_time[red_enc_pks[i+1]],red_cam_pks[i+1]-red_cam_pks[i]+1)
-        new_cam_time = np.hstack((new_cam_time,new_seg[0:-1]))
+    # new_cam_time = cam_time[0:red_cam_pks[0]]
+    # for i in range(len(red_cam_pks)-1):
+    #     new_seg = np.linspace(enc_time[red_enc_pks[i]],enc_time[red_enc_pks[i+1]],red_cam_pks[i+1]-red_cam_pks[i]+1)
+    #     new_cam_time = np.hstack((new_cam_time,new_seg[0:-1]))
 
-    end_seg = cam_time[red_cam_pks[-1]:] + t_diff[-1]
-    new_cam_time = np.hstack((new_cam_time,end_seg))
-    cam_time = new_cam_time
+    # end_seg = cam_time[red_cam_pks[-1]:] + t_diff[-1]
+    # new_cam_time = np.hstack((new_cam_time,end_seg))
+    # cam_time = new_cam_time
 
-    # with open("new_cam_time.csv", 'w') as f:
-    #     np.savetxt(f, new_cam_time, fmt='%.3f', delimiter=", ")
 
-    plt.figure(1)
-    plt.plot(cam_time,red_cam_angs,'r')
-    plt.plot(cam_time,blue_cam_angs,'b')
+    # NEW ALIGNMENT STRATEGY
+    
+    new_cam_time = cam_time[cam_start_ind:cam_end_ind] - cam_time[cam_start_ind]
+    new_blue_cam_angs = blue_cam_angs[cam_start_ind:cam_end_ind]
+    new_red_cam_angs = red_cam_angs[cam_start_ind:cam_end_ind]
+    print(enc_end_ind)
+    new_enc_time = enc_time[enc_start_ind:enc_end_ind] - enc_time[enc_start_ind]
+    new_blue_enc_angs = blue_enc_angs[enc_start_ind:enc_end_ind]
+    new_red_enc_angs = red_enc_angs[enc_start_ind:enc_end_ind]
+    
+    plt.figure(2)
+    plt.plot(new_cam_time,new_red_cam_angs,'r')
+    plt.plot(new_cam_time,new_blue_cam_angs,'b')
 
-    plt.plot(enc_time,blue_enc_angs,'c')
-    plt.plot(enc_time,red_enc_angs,'m')
+    plt.plot(new_enc_time,new_blue_enc_angs,'c')
+    plt.plot(new_enc_time,new_red_enc_angs,'m')
 
     plt.legend([
         'red_cam_angs', 'blue_cam_angs',
@@ -271,24 +277,23 @@ def main(cal_folder,inner_mask,outer_mask):
     # plt.plot(cam_time,red_cam_det)
     # plt.plot(enc_time,red_enc_det)
 
-    plt.show()
 
     # Compare camera_angs and encoder_angs to get inverse_calibration
-    blue_cam_rng = blue_cam_angs[np.argmax(blue_cam_angs):np.argmin(blue_cam_angs)]
-    blue_enc_rng = blue_enc_angs[np.argmax(blue_enc_angs):np.argmin(blue_enc_angs)]
+    blue_cam_rng = new_blue_cam_angs[np.argmax(new_blue_cam_angs):np.argmin(new_blue_cam_angs)]
+    blue_enc_rng = new_blue_enc_angs[np.argmax(new_blue_enc_angs):np.argmin(new_blue_enc_angs)]
 
-    red_cam_rng = red_cam_angs[np.argmax(red_cam_angs):np.argmin(red_cam_angs)]
-    red_enc_rng = red_enc_angs[np.argmax(red_enc_angs):np.argmin(red_enc_angs)]
+    red_cam_rng = new_red_cam_angs[np.argmax(new_red_cam_angs):np.argmin(new_red_cam_angs)]
+    red_enc_rng = new_red_enc_angs[np.argmax(new_red_enc_angs):np.argmin(new_red_enc_angs)]
 
-    print('blue: ', np.argmax(blue_cam_angs),np.argmin(blue_cam_angs))
-    cam_time_rng = cam_time[np.argmax(blue_cam_angs):np.argmin(blue_cam_angs)]
-    enc_time_rng = enc_time[np.argmax(blue_enc_angs):np.argmin(blue_enc_angs)]
+    print('blue: ', np.argmax(new_blue_cam_angs),np.argmin(new_blue_cam_angs))
+    cam_time_rng = new_cam_time[np.argmax(new_blue_cam_angs):np.argmin(new_blue_cam_angs)]
+    enc_time_rng = new_enc_time[np.argmax(new_blue_enc_angs):np.argmin(new_blue_enc_angs)]
     print(cam_time_rng)
     print(enc_time_rng[0],enc_time_rng[-1])
     blue_cam_rng_res = np.interp(enc_time_rng,cam_time_rng,blue_cam_rng)
 
-    cam_time_rng = cam_time[np.argmax(red_cam_angs):np.argmin(red_cam_angs)]
-    enc_time_rng = enc_time[np.argmax(red_enc_angs):np.argmin(red_enc_angs)]
+    cam_time_rng = new_cam_time[np.argmax(new_red_cam_angs):np.argmin(new_red_cam_angs)]
+    enc_time_rng = new_enc_time[np.argmax(new_red_enc_angs):np.argmin(new_red_enc_angs)]
     red_cam_rng_res = np.interp(enc_time_rng,cam_time_rng,red_cam_rng)
 
     inv_blue = np.vstack((blue_cam_rng_res,blue_enc_rng)).T
@@ -302,7 +307,7 @@ def main(cal_folder,inner_mask,outer_mask):
     #     ])
     # plt.show()
 
-    plt.figure(2)
+    plt.figure(3)
     plt.plot(blue_cam_rng_res,blue_enc_rng)
     plt.plot(red_cam_rng_res,red_enc_rng)
 
@@ -310,16 +315,43 @@ def main(cal_folder,inner_mask,outer_mask):
     print('blue linregress: ',slope, intercept, r_value)
     slope, intercept, r_value, p_value, std_err = linregress(red_cam_rng_res,red_enc_rng)
     print('red linregress: ',slope, intercept, r_value)
-    plt.show()
 
     with open(cal_folder + '/inv_blue.csv', 'w') as f:
         np.savetxt(f, inv_blue, fmt='%.7f', delimiter=", ")
     with open(cal_folder + '/inv_red.csv', 'w') as f:
         np.savetxt(f, inv_red, fmt='%.7f', delimiter=", ")
 
-    plt.figure(3)
+    plt.figure(4)
     plt.plot(blue_cam_rng_res,blue_enc_rng-blue_cam_rng_res,'b')
     plt.plot(red_cam_rng_res,red_enc_rng-red_cam_rng_res,'r')
+    
+    inv_blue = np.flip(inv_blue, axis=0)
+    inv_red = np.flip(inv_red, axis=0)
+    
+    blue_cam_ang_cal = np.interp(new_blue_cam_angs,inv_blue[:,0],inv_blue[:,1])
+    red_cam_ang_cal = np.interp(new_red_cam_angs,inv_red[:,0],inv_red[:,1])
+    
+    red_enc_ang_res = np.interp(new_cam_time, 
+                                new_enc_time, 
+                                new_red_enc_angs)
+    blue_enc_ang_res = np.interp(new_cam_time,
+                                 new_enc_time, 
+                                 new_blue_enc_angs)
+    plt.figure(5)
+    plt.plot(new_cam_time, 
+             red_cam_ang_cal, 'r')
+    plt.plot(new_cam_time, 
+             red_enc_ang_res, 'b')
+    plt.plot(new_cam_time, 
+             blue_cam_ang_cal, 'c')
+    plt.plot(new_cam_time,
+             blue_enc_ang_res, 'g')
+    
+    plt.figure(6)
+    plt.plot(new_cam_time, 
+             red_cam_ang_cal - red_enc_ang_res, 'r')
+    plt.plot(new_cam_time,
+             blue_cam_ang_cal - blue_enc_ang_res, 'b')
     plt.show()
 
 
