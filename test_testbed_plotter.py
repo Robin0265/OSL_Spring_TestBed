@@ -132,7 +132,7 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     # Calculate camera_angs 
     if not os.path.exists(test_folder + '/camera_enabled_angles.csv'):
 
-        blue_cam_angs, red_cam_angs, cam_time = test(file = test_folder + '/Stiffness_Measure_250326_164341.h264',
+        blue_cam_angs, red_cam_angs, cam_time = test(file = test_folder + '/Stiffness_Measure_250405_194144.h264',
                                                     inner_mask_loc = inner_mask,
                                                     outer_mask_loc = outer_mask,
                                                     pre_mask_save_loc = test_folder + '/camera_enabled_pre_mask.png',
@@ -174,24 +174,24 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
                             test_folder + '/motor_enc_calib_0.csv',
                             # test_folder + '/camera_enabled_volts.csv'
                             )
-    red_enc_angs = stp.theta_0
-    blue_enc_angs = stp.theta_1
+    red_enc_angs = stp.theta_1
+    blue_enc_angs = stp.theta_0
     enc_time = stp.a0_t
     torque = stp.tau
     trq_time = stp.a0_t
 
     # Align the timing based on angle peaks
-    pks,_ = find_peaks(red_cam_angs,height=1*np.pi/180,distance=500)
-    negpks,_ = find_peaks(-red_cam_angs,height=1*np.pi/180,distance=500)
+    pks,_ = find_peaks(blue_cam_angs,height=1*np.pi/180,distance=500)
+    negpks,_ = find_peaks(-blue_cam_angs,height=1*np.pi/180,distance=500)
     print(pks, negpks) # suspciciously, these lists are both empty.
     # negpks[0] = negpks[0] - 1
-    red_cam_pks = np.sort(np.hstack((pks,negpks)))
-    pks,_ = find_peaks(red_enc_angs,height=1*np.pi/180,distance=1500)
-    negpks,_ = find_peaks(-red_enc_angs,height=1*np.pi/180,distance=1500)
-    red_enc_pks = np.sort(np.hstack((pks,negpks)))
+    blue_cam_pks = np.sort(np.hstack((pks,negpks)))
+    pks,_ = find_peaks(blue_enc_angs,height=1*np.pi/180,distance=1500)
+    negpks,_ = find_peaks(-blue_enc_angs,height=1*np.pi/180,distance=1500)
+    blue_enc_pks = np.sort(np.hstack((pks,negpks)))
 
-    red_cam_det = np.gradient(red_cam_angs,cam_time)
-    red_enc_det = np.gradient(red_enc_angs,enc_time)
+    red_cam_det = np.gradient(blue_cam_angs,cam_time)
+    red_enc_det = np.gradient(blue_enc_angs,enc_time)
     threshold = 0.0*np.pi/180
     thresh_cross_cam = np.diff(red_cam_det > threshold, prepend=False)
     thresh_cross_enc = np.diff(red_enc_det > threshold, prepend=False)
@@ -207,8 +207,8 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     enc_start_ind = cross_ind_enc[np.argwhere(enc_ends_cross)[0,0]]
     enc_end_ind = cross_ind_enc[np.argwhere(enc_ends_cross)[-1,0]-1]
 
-    red_cam_pks = np.hstack((cam_start_ind,red_cam_pks,cam_end_ind))
-    red_enc_pks = np.hstack((enc_start_ind,red_enc_pks,enc_end_ind))
+    red_cam_pks = np.hstack((cam_start_ind,blue_cam_pks,cam_end_ind))
+    red_enc_pks = np.hstack((enc_start_ind,blue_enc_pks,enc_end_ind))
     plt.plot(cam_time,blue_cam_angs)
     plt.plot(cam_time,red_cam_angs)
     plt.plot(enc_time, blue_enc_angs)
@@ -251,6 +251,7 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     blue_cam_ang_cal_res = np.interp(enc_time[red_enc_pks[0]:red_enc_pks[-1]], 
                                      cam_time[red_cam_pks[0]:red_cam_pks[-1]], 
                                      blue_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]])
+    torque_cam_reg = torque[red_enc_pks[0]:red_enc_pks[-1]]
     
     red_enc_ang_res = np.interp(cam_time[red_cam_pks[0]:red_cam_pks[-1]], 
                                 enc_time[red_enc_pks[0]:red_enc_pks[-1]], 
@@ -268,11 +269,11 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     # p = np.polyfit(red_cam_rng_res,red_enc_angs,1)
     # print("Fit: ",p)
     
-    plt.figure(6)
-    plt.plot(cam_time[red_cam_pks[0]:red_cam_pks[-1]], 
-             red_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]] - red_enc_ang_res, 'r')
-    plt.plot(cam_time[red_cam_pks[0]:red_cam_pks[-1]],
-             blue_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]] - blue_enc_ang_res, 'b')
+    # plt.figure(6)
+    # plt.plot(cam_time[red_cam_pks[0]:red_cam_pks[-1]], 
+    #          red_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]] - red_enc_ang_res, 'r')
+    # plt.plot(cam_time[red_cam_pks[0]:red_cam_pks[-1]],
+    #          blue_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]] - blue_enc_ang_res, 'b')
     
     plt.figure(1)
     plt.plot(cam_time,red_cam_angs*180/np.pi,'r')
@@ -287,11 +288,11 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     plt.plot(cam_time,red_cam_det)
     plt.plot(enc_time,red_enc_det)
 
-    # plt.plot(trq_time,-torque)    
+    plt.plot(trq_time,-torque)    
 
-    defl = (- blue_cam_ang_cal + red_cam_ang_cal)*180/np.pi
+    defl = -(blue_cam_ang_cal - red_cam_ang_cal)*180/np.pi
     torque_res = np.interp(cam_time, trq_time, torque)
-    enc_defl = (blue_enc_angs - red_enc_angs)*180/np.pi
+    enc_defl = -(blue_enc_angs - red_enc_angs)*180/np.pi
 
     defl_torque = np.vstack((defl,torque_res)).T
     # defl_torque = np.vstack((enc_defl,torque)).T
@@ -302,6 +303,7 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
 
     plt.figure(2)
     plt.plot(enc_defl,torque)
+    # plt.plot(-(blue_cam_ang_cal_res - red_cam_ang_cal_res)*180/np.pi,torque_cam_reg)
     plt.plot(defl,torque_res)
     plt.legend(['Motor Encoder Measurement','Optical Measurement'])
     plt.xlabel('Deflection (deg)')
@@ -341,8 +343,8 @@ if __name__ == '__main__':
     #         defl_trq_file='S1_14_19.csv')    
 
     main(cal_folder='./cal_folder',
-            inner_mask = 'inner_mask_0326.png',
-            outer_mask = 'outer_mask_0326.png',
+            inner_mask = 'mask_inner_0405.png',
+            outer_mask = 'mask_outer_0405.png',
             test_folder='./meas_folder',
         )
     plt.show()

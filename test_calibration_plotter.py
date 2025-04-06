@@ -76,7 +76,7 @@ class SEATestbedPlotter(object):
 
         self.add_line("a1_t", "pi_time", act1[:,0]-init_pi_time)
         self.add_line("a1_ts", "State time", act1[:,1])
-        self.add_line("a1_x", "Motor enc angle", act1[:,2]-act1[0,2])
+        self.add_line("a1_x", "Motor enc angle", -act1[:,9]+act1[0,9])
         self.add_line("a1_xd", "Motor enc velocity", act1[:,3])
         self.add_line("a1_xdd", "Motor enc acceleration", act1[:,4])  
         self.add_line("a1_vm", "Motor deph voltage", act1[:,5]) 
@@ -130,7 +130,7 @@ def main(cal_folder,inner_mask,outer_mask):
     # Create red_cal and blue_cal if they aren't in folder
     if not os.path.exists('blue_cal.csv') or not os.path.exists('red_cal.csv'):
         print('Do the plot_cal thing')
-        test(file = cal_folder + '/Calibration250326_153420.h264',
+        test(file = cal_folder + '/Calibration250405_191150.h264',
             inner_mask_loc = inner_mask,
             outer_mask_loc = outer_mask,
             pre_mask_save_loc = cal_folder + '/camera_calibration_pre_mask.png',
@@ -161,7 +161,7 @@ def main(cal_folder,inner_mask,outer_mask):
     # Calculate camera_angs 
     if not os.path.exists(cal_folder + '/camera_enabled_angles.csv'):
 
-        blue_cam_angs, red_cam_angs, cam_time = test(file = cal_folder + '/Calibration250326_153420.h264',
+        blue_cam_angs, red_cam_angs, cam_time = test(file = cal_folder + '/Calibration250405_191150.h264',
                                                     inner_mask_loc = inner_mask,
                                                     outer_mask_loc = outer_mask,
                                                     pre_mask_save_loc = cal_folder + '/camera_calibration_pre_mask.png',
@@ -182,8 +182,8 @@ def main(cal_folder,inner_mask,outer_mask):
 
     # Read encoder_angs from SEA_Testbed_Plotter
     stp = SEATestbedPlotter(cal_folder + '/motor_enc_calib_0.csv',cal_folder + '/motor_enc_calib_0.csv')
-    red_enc_angs = - stp.theta_0
-    blue_enc_angs = - stp.theta_1
+    red_enc_angs = - stp.theta_1
+    blue_enc_angs = - stp.theta_0
     enc_time = stp.a0_t
 
     plt.figure(1)
@@ -361,8 +361,8 @@ if __name__ == '__main__':
     folder = "./cal_folder"
     # test(file=folder+'camera_calibration_spring_test.h264',
     main(cal_folder=folder,
-        inner_mask = "inner_mask_0326.png", #None, #folder+'inner_mask0826.png',
-        outer_mask = "outer_mask_0326.png" #None, #folder+'outer_mask0826.png',
+        inner_mask = "mask_inner_0405.png", #None, #folder+'inner_mask0826.png',
+        outer_mask = "mask_outer_0405.png" #None, #folder+'outer_mask0826.png',
         )
     # main(cal_folder='data/08_30_22_T13',
     #         inner_mask = 'inner_mask0830.png',
