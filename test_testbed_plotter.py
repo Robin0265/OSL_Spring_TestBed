@@ -243,22 +243,33 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     inv_red = np.flip(inv_red, axis=0)
 
     blue_cam_ang_cal = np.interp(blue_cam_angs,inv_blue[:,0],inv_blue[:,1])
+    # blue_cam_ang_cal = blue_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]]
     red_cam_ang_cal = np.interp(red_cam_angs,inv_red[:,0],inv_red[:,1])
+    # red_cam_ang_cal = red_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]]
+    
 
-    red_cam_ang_cal_res = np.interp(enc_time[red_enc_pks[0]:red_enc_pks[-1]], 
+    red_cam_ang_cal_res = np.interp(enc_time, 
                                     cam_time[red_cam_pks[0]:red_cam_pks[-1]], 
                                     red_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]])
-    blue_cam_ang_cal_res = np.interp(enc_time[red_enc_pks[0]:red_enc_pks[-1]], 
+    blue_cam_ang_cal_res = np.interp(enc_time, 
                                      cam_time[red_cam_pks[0]:red_cam_pks[-1]], 
                                      blue_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]])
-    torque_cam_reg = torque[red_enc_pks[0]:red_enc_pks[-1]]
     
-    red_enc_ang_res = np.interp(cam_time[red_cam_pks[0]:red_cam_pks[-1]], 
-                                enc_time[red_enc_pks[0]:red_enc_pks[-1]], 
-                                red_enc_angs[red_enc_pks[0]:red_enc_pks[-1]])
-    blue_enc_ang_res = np.interp(cam_time[red_cam_pks[0]:red_cam_pks[-1]], 
-                                 enc_time[red_enc_pks[0]:red_enc_pks[-1]], 
-                                 blue_enc_angs[red_enc_pks[0]:red_enc_pks[-1]])
+    plt.figure(3)
+    plt.plot(enc_time,blue_cam_ang_cal_res*180/np.pi,'b')
+    plt.plot(enc_time,red_cam_ang_cal_res*180/np.pi,'r')
+    plt.plot(enc_time,blue_enc_angs*180/np.pi,'c')
+    plt.plot(enc_time,red_enc_angs*180/np.pi,'m')
+    plt.show()
+    
+    # torque_cam_reg = torque[red_enc_pks[0]:red_enc_pks[-1]]
+    
+    # red_enc_ang_res = np.interp(cam_time[red_cam_pks[0]:red_cam_pks[-1]], 
+    #                             enc_time, 
+    #                             red_enc_angs[red_enc_pks[0]:red_enc_pks[-1]])
+    # blue_enc_ang_res = np.interp(cam_time[red_cam_pks[0]:red_cam_pks[-1]], 
+    #                              enc_time, 
+    #                              blue_enc_angs[red_enc_pks[0]:red_enc_pks[-1]])
     # Validation thing
     # red_cam_rng_res = np.interp(enc_time,cam_time,red_cam_angs)
     # plt.figure(5)
@@ -288,13 +299,20 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     plt.plot(cam_time,red_cam_det)
     plt.plot(enc_time,red_enc_det)
 
-    plt.plot(trq_time,-torque)    
+    plt.plot(trq_time,-torque)
+    plt.legend(['Blue Cam','Red Cam','Blue Enc','Red Enc',
+                'Blue Cam Cal','Red Cam Cal','Red Cam Det','Red Enc Det',
+                'Torque Sensor'])
+    plt.xlabel('Time (s)')
+    plt.ylabel('Angle (deg)')
+    plt.title('Angle Calibration')
 
     defl = -(blue_cam_ang_cal - red_cam_ang_cal)*180/np.pi
-    torque_res = np.interp(cam_time, trq_time, torque)
+    # torque_res = np.interp(cam_time, trq_time, torque)
+    
     enc_defl = -(blue_enc_angs - red_enc_angs)*180/np.pi
 
-    defl_torque = np.vstack((defl,torque_res)).T
+    # defl_torque = np.vstack((defl,torque_res)).T
     # defl_torque = np.vstack((enc_defl,torque)).T
 
     # plt.figure(2)
@@ -303,14 +321,14 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
 
     plt.figure(2)
     plt.plot(enc_defl,torque)
-    # plt.plot(-(blue_cam_ang_cal_res - red_cam_ang_cal_res)*180/np.pi,torque_cam_reg)
-    plt.plot(defl,torque_res)
+    plt.plot(-(blue_cam_ang_cal_res - red_cam_ang_cal_res)*180/np.pi,torque)
+    # plt.plot(defl,torque_res)
     plt.legend(['Motor Encoder Measurement','Optical Measurement'])
     plt.xlabel('Deflection (deg)')
     plt.ylabel('Torque (Nm)')
 
-    with open(test_folder + defl_trq_file, 'w') as f:
-        np.savetxt(f, defl_torque, fmt='%.7f', delimiter=", ")
+    # with open(test_folder + defl_trq_file, 'w') as f:
+    #     np.savetxt(f, defl_torque, fmt='%.7f', delimiter=", ")
 
 
 
