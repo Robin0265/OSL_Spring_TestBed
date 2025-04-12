@@ -274,6 +274,7 @@ def main(cal_folder,inner_mask,outer_mask):
         'blue_enc_angs', 'red_enc_angs',
         # 'red_cam_det', 'red_enc_det',
         ])
+    plt.show()
     # plt.plot(cam_time,red_cam_det)
     # plt.plot(enc_time,red_enc_det)
 

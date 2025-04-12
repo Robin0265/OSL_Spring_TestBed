@@ -132,7 +132,7 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     # Calculate camera_angs 
     if not os.path.exists(test_folder + '/camera_enabled_angles.csv'):
 
-        blue_cam_angs, red_cam_angs, cam_time = test(file = test_folder + '/Stiffness_Measure_250410_220816.h264',
+        blue_cam_angs, red_cam_angs, cam_time = test(file = test_folder + '/Stiffness_Measure_250412_120729.h264',
                                                     inner_mask_loc = inner_mask,
                                                     outer_mask_loc = outer_mask,
                                                     pre_mask_save_loc = test_folder + '/camera_enabled_pre_mask.png',
@@ -209,10 +209,14 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
 
     red_cam_pks = np.hstack((cam_start_ind,blue_cam_pks,cam_end_ind))
     red_enc_pks = np.hstack((enc_start_ind,blue_enc_pks,enc_end_ind))
-    plt.plot(cam_time,blue_cam_angs)
-    plt.plot(cam_time,red_cam_angs)
-    plt.plot(enc_time, blue_enc_angs)
-    plt.plot(enc_time, red_enc_angs)
+    cam_start_ind = 1614
+    cam_end_ind = 7460
+    enc_start_ind = 2508
+    enc_end_ind = 58508
+    plt.plot(cam_time[cam_start_ind:cam_end_ind] - cam_time[cam_start_ind],blue_cam_angs[cam_start_ind:cam_end_ind])
+    plt.plot(enc_time[enc_start_ind:enc_end_ind] - enc_time[enc_start_ind],blue_enc_angs[enc_start_ind:enc_end_ind])
+    plt.plot(cam_time[cam_start_ind:cam_end_ind] - cam_time[cam_start_ind],red_cam_angs[cam_start_ind:cam_end_ind])
+    plt.plot(enc_time[enc_start_ind:enc_end_ind] - enc_time[enc_start_ind],red_enc_angs[enc_start_ind:enc_end_ind])
     plt.show()
     # print(cam_time[red_cam_pks])
     # print(enc_time[red_enc_pks])
@@ -247,21 +251,21 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     red_cam_ang_cal = np.interp(red_cam_angs,inv_red[:,0],inv_red[:,1])
     # red_cam_ang_cal = red_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]]
     
-
-    red_cam_ang_cal_res = np.interp(enc_time[red_enc_pks[0]:red_enc_pks[-1]], 
-                                    cam_time[red_cam_pks[0]:red_cam_pks[-1]], 
-                                    red_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]])
-    blue_cam_ang_cal_res = np.interp(enc_time[red_enc_pks[0]:red_enc_pks[-1]], 
-                                     cam_time[red_cam_pks[0]:red_cam_pks[-1]], 
-                                     blue_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]])
+    enc_time = enc_time[enc_start_ind:enc_end_ind] - enc_time[enc_start_ind]
+    cam_time = cam_time[cam_start_ind:cam_end_ind] - cam_time[cam_start_ind]
     
-    enc_time = enc_time[red_enc_pks[0]:red_enc_pks[-1]]
+    red_cam_ang_cal_res = np.interp(enc_time, 
+                                    cam_time, 
+                                    red_cam_ang_cal[cam_start_ind:cam_end_ind])
+    blue_cam_ang_cal_res = np.interp(enc_time, 
+                                     cam_time, 
+                                     blue_cam_ang_cal[cam_start_ind:cam_end_ind])
     
     plt.figure(3)
     plt.plot(enc_time,blue_cam_ang_cal_res*180/np.pi,'b')
     plt.plot(enc_time,red_cam_ang_cal_res*180/np.pi,'r')
-    plt.plot(enc_time,blue_enc_angs[red_enc_pks[0]:red_enc_pks[-1]]*180/np.pi,'c')
-    plt.plot(enc_time,red_enc_angs[red_enc_pks[0]:red_enc_pks[-1]]*180/np.pi,'m')
+    plt.plot(enc_time,blue_enc_angs[enc_start_ind:enc_end_ind]*180/np.pi,'c')
+    plt.plot(enc_time,red_enc_angs[enc_start_ind:enc_end_ind]*180/np.pi,'m')
     plt.show()
     
     # torque_cam_reg = torque[red_enc_pks[0]:red_enc_pks[-1]]
@@ -289,19 +293,19 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     #          blue_cam_ang_cal[red_cam_pks[0]:red_cam_pks[-1]] - blue_enc_ang_res, 'b')
     
     plt.figure(1)
-    plt.plot(cam_time,red_cam_angs*180/np.pi,'r')
-    plt.plot(cam_time,blue_cam_angs*180/np.pi,'b')
+    plt.plot(cam_time,red_cam_angs[cam_start_ind:cam_end_ind]*180/np.pi,'r')
+    plt.plot(cam_time,blue_cam_angs[cam_start_ind:cam_end_ind]*180/np.pi,'b')
 
-    plt.plot(enc_time,blue_enc_angs[red_enc_pks[0]:red_enc_pks[-1]]*180/np.pi,'c')
-    plt.plot(enc_time,red_enc_angs[red_enc_pks[0]:red_enc_pks[-1]]*180/np.pi,'m')
+    plt.plot(enc_time,blue_enc_angs[enc_start_ind:enc_end_ind]*180/np.pi,'c')
+    plt.plot(enc_time,red_enc_angs[enc_start_ind:enc_end_ind]*180/np.pi,'m')
 
-    plt.plot(cam_time,red_cam_ang_cal*180/np.pi,'g')
-    plt.plot(cam_time,blue_cam_ang_cal*180/np.pi,'k')
+    plt.plot(cam_time,red_cam_ang_cal[cam_start_ind:cam_end_ind]*180/np.pi,'g')
+    plt.plot(cam_time,blue_cam_ang_cal[cam_start_ind:cam_end_ind]*180/np.pi,'k')
 
-    plt.plot(cam_time,red_cam_det)
-    plt.plot(enc_time,red_enc_det[red_enc_pks[0]:red_enc_pks[-1]])
+    plt.plot(cam_time,red_cam_det[cam_start_ind:cam_end_ind])
+    plt.plot(enc_time,red_enc_det[enc_start_ind:enc_end_ind])
 
-    plt.plot(trq_time,-torque)
+    plt.plot(enc_time,-torque[enc_start_ind:enc_end_ind])
     plt.legend(['Blue Cam','Red Cam','Blue Enc','Red Enc',
                 'Blue Cam Cal','Red Cam Cal','Red Cam Det','Red Enc Det',
                 'Torque Sensor'])
@@ -322,8 +326,8 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     # plt.plot(enc_time,enc_defl)
 
     plt.figure(2)
-    plt.plot(enc_defl[red_enc_pks[0]:red_enc_pks[-1]],torque[red_enc_pks[0]:red_enc_pks[-1]])
-    plt.plot(-(blue_cam_ang_cal_res - red_cam_ang_cal_res)*180/np.pi,torque[red_enc_pks[0]:red_enc_pks[-1]])
+    plt.plot(enc_defl[enc_start_ind:enc_end_ind],torque[enc_start_ind:enc_end_ind])
+    plt.plot(-(blue_cam_ang_cal_res - red_cam_ang_cal_res)*180/np.pi,torque[enc_start_ind:enc_end_ind])
     # plt.plot(defl,torque_res)
     plt.legend(['Motor Encoder Measurement','Optical Measurement'])
     plt.xlabel('Deflection (deg)')
