@@ -130,7 +130,7 @@ def main(cal_folder,inner_mask,outer_mask):
     # Create red_cal and blue_cal if they aren't in folder
     if not os.path.exists('blue_cal.csv') or not os.path.exists('red_cal.csv'):
         print('Do the plot_cal thing')
-        test(file = cal_folder + '/Calibration250405_191150.h264',
+        test(file = cal_folder + '/Calibration250410_215242.h264',
             inner_mask_loc = inner_mask,
             outer_mask_loc = outer_mask,
             pre_mask_save_loc = cal_folder + '/camera_calibration_pre_mask.png',
@@ -161,7 +161,7 @@ def main(cal_folder,inner_mask,outer_mask):
     # Calculate camera_angs 
     if not os.path.exists(cal_folder + '/camera_enabled_angles.csv'):
 
-        blue_cam_angs, red_cam_angs, cam_time = test(file = cal_folder + '/Calibration250405_191150.h264',
+        blue_cam_angs, red_cam_angs, cam_time = test(file = cal_folder + '/Calibration250410_215242.h264',
                                                     inner_mask_loc = inner_mask,
                                                     outer_mask_loc = outer_mask,
                                                     pre_mask_save_loc = cal_folder + '/camera_calibration_pre_mask.png',
