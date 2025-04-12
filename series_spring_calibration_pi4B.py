@@ -32,7 +32,7 @@ if __name__ == "__main__":
     # GPIO.output(PIN_START, GPIO.LOW)
     picam2.start_preview(Preview.DRM)
     try:
-        file_name = 'test2.h264'
+        file_name = 'Calibration'+strftime("%y%m%d_%H%M%S")+'.h264'
         picam2.start_recording(encoder, file_name)
         while True:
             time.sleep(1/200)

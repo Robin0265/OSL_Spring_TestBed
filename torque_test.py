@@ -18,7 +18,7 @@ WAIT = 5
 
 if __name__ == "__main__":
 
-    osl = OpenSourceLeg(frequency=500, file_name='Stiffness_Measure_'+strftime("%y%m%d_%H%M%S")) # 200 Hz
+    osl = OpenSourceLeg(frequency=500, file_name='Torque_Sensor_Test'+strftime("%y%m%d_%H%M%S")) # 200 Hz
     # osl.add_joint(name="knee", port = None, gear_ratio=GR_ACTPACK)
     osl.add_joint(name="knee", port = "/dev/ttyACM0", gear_ratio=GR_BOSTONGEAR*GR_ACTPACK)
     # osl.add_joint(name="ankle", port = None, gear_ratio=GR_ACTPACK*GR_BOSTONGEAR)
@@ -27,16 +27,16 @@ if __name__ == "__main__":
     torque_sensor_thread = TorqueSensorThread(torqueSensor, update_interval=1.0/osl._frequency)
     
     
-    picam2 = Picamera2()
-    picam2.configure(
-            picam2.create_video_configuration(
-                raw={"size":(1640,1232)}, # raw size 
-                main={"size": (640, 480)} # scaled size
-                )
-            )
-    picam2.set_controls({"FrameRate": 30})
-    encoder = H264Encoder()
-    picam2.start_preview(Preview.DRM)
+    # picam2 = Picamera2()
+    # picam2.configure(
+    #         picam2.create_video_configuration(
+    #             raw={"size":(1640,1232)}, # raw size 
+    #             main={"size": (640, 480)} # scaled size
+    #             )
+    #         )
+    # picam2.set_controls({"FrameRate": 30})
+    # encoder = H264Encoder()
+    # picam2.start_preview(Preview.DRM)
     # Initialize joint encoder:
     # knee_enc = AS5048A_Encoder(
     #         name="output",
@@ -60,11 +60,11 @@ if __name__ == "__main__":
     osl.log.add_attributes(locals(), ["tau_futek"])
     tau_futek = 0
     # osl.log.add_attributes(locals(), ["tau_meas","joint_ang_pre","output_ang_pre","ang_err","ang_err_filt","deflection","ang_err_pre"])
-    picam2.start_recording(encoder, 'Stiffness_Measure_'+strftime("%y%m%d_%H%M%S")+'.h264')
+    # picam2.start_recording(encoder, 'Stiffness_Measure_'+strftime("%y%m%d_%H%M%S")+'.h264')
     # nonlinear_compensation(osl,knee_enc,Calibrate=False)
     with osl:
         # Calculate Offsets for Futek and Angles (to center in backlash)
-        torqueSensor.calibrate_loadcell() # recalibrates Futek or looks up previous calibration value
+        torqueSensor.calibrate_loadcell(Calibrate=True) # recalibrates Futek or looks up previous calibration value
         # offset,joint_ang_init = backlash_centering_by_hand(osl,knee_enc,Calculate=True) # calculates angle offset to center in backlash, or looks up previous offset
         input("Hit enter to continue...")
 
@@ -119,66 +119,62 @@ if __name__ == "__main__":
             osl.update()
             if t > WAIT:
                 break
-        # for i in i_des:
-        for p in pos_des:
-            for t in osl.clock:
-                if t < t_test:
-                    # i_command = i/t_test*t
-                    pos_command = p / t_test * t
-                elif t < 3*t_test:
-                    # i_command = -i/t_test*t + 2*i
-                    pos_command = -p/t_test*t + 2*p
-                elif t < 4*t_test:
-                    # i_command = i/t_test*t - 4*i
-                    pos_command = p/t_test*t - 4*p
-                else:
-                    break
+        # torque_sensor_thread.start()
+        # # for i in i_des:
+        # for p in pos_des:
+        #     for t in osl.clock:
+        #         if t < t_test:
+        #             # i_command = i/t_test*t
+        #             pos_command = p / t_test * t
+        #         elif t < 3*t_test:
+        #             # i_command = -i/t_test*t + 2*i
+        #             pos_command = -p/t_test*t + 2*p
+        #         elif t < 4*t_test:
+        #             # i_command = i/t_test*t - 4*i
+        #             pos_command = p/t_test*t - 4*p
+        #         else:
+        #             break
                 
-                tau_futek = torque_sensor_thread.get_latest_torque()
-                # knee_enc._update()
-                osl.update()
+        #         tau_futek = torque_sensor_thread.get_latest_torque()
+        #         # knee_enc._update()
+        #         osl.update()
                 
-                # joint_ang_pre = knee_enc.abs_comp_ang
-                # output_ang_pre = osl.knee.output_position + offset
-                # ang_err_pre = output_ang_pre - joint_ang_pre
+        #         # joint_ang_pre = knee_enc.abs_comp_ang
+        #         # output_ang_pre = osl.knee.output_position + offset
+        #         # ang_err_pre = output_ang_pre - joint_ang_pre
                 
-                # output_ang_adjusted = output_ang_pre + velocity_time_scalar*osl.knee.output_velocity
-                # ang_err = output_ang_adjusted - joint_ang_pre
-                # ang_err_filt = ang_err_lp_filter.update(ang_err_med_filter.update(ang_err))
-                # deflection = spring.backlash_comp_smooth(ang_err_filt)    
-                # tau_meas = deflection*spring.K*GR_ACTPACK*GR_TRANS/osl.knee.gear_ratio
+        #         # output_ang_adjusted = output_ang_pre + velocity_time_scalar*osl.knee.output_velocity
+        #         # ang_err = output_ang_adjusted - joint_ang_pre
+        #         # ang_err_filt = ang_err_lp_filter.update(ang_err_med_filter.update(ang_err))
+        #         # deflection = spring.backlash_comp_smooth(ang_err_filt)    
+        #         # tau_meas = deflection*spring.K*GR_ACTPACK*GR_TRANS/osl.knee.gear_ratio
                 
-                print(osl.knee.motor_current)
-                # SAFETY CHECKS
-                if osl.knee.winding_temperature > 100:
-                    raise ValueError("Motor above thermal limit. Quitting!")            
-                # Check battery voltages
-                if osl.knee.battery_voltage/1000 > 43:
-                    print("Knee voltage {}".format(1/1000*osl.knee.battery_voltage))
-                    raise ValueError("Battery voltage above 43 V")
-                if osl.knee.battery_voltage/1000 < 20:
-                    print("Knee voltage {}".format(1/1000*osl.knee.battery_voltage))
-                    raise ValueError("Battery voltage below 32 V")
-                if np.abs(tau_futek) > 90:
-                    print("Torque too high: {} Nm".format(tau_futek))
-                    break
-                if osl.knee.motor_current/1000 > 8:
-                    print("Knee Current {}".format(1/1000*osl.knee.motor_current))
-                    raise ValueError("Motor Current above 6 A")
+        #         print(osl.knee.motor_current)
+        #         # SAFETY CHECKS
+        #         if osl.knee.winding_temperature > 100:
+        #             raise ValueError("Motor above thermal limit. Quitting!")            
+        #         # Check battery voltages
+        #         if osl.knee.battery_voltage/1000 > 43:
+        #             print("Knee voltage {}".format(1/1000*osl.knee.battery_voltage))
+        #             raise ValueError("Battery voltage above 43 V")
+        #         if osl.knee.battery_voltage/1000 < 20:
+        #             print("Knee voltage {}".format(1/1000*osl.knee.battery_voltage))
+        #             raise ValueError("Battery voltage below 32 V")
+        #         if np.abs(tau_futek) > 90:
+        #             print("Torque too high: {} Nm".format(tau_futek))
+        #             break
+        #         if osl.knee.motor_current/1000 > 8:
+        #             print("Knee Current {}".format(1/1000*osl.knee.motor_current))
+        #             raise ValueError("Motor Current above 6 A")
                 
-                osl.knee.set_output_position(init_pos + pos_command)
+        #         osl.knee.set_output_position(init_pos + pos_command)
                 
-        
-        for t in osl.clock:
-            tau_futek = torque_sensor_thread.get_latest_torque()
-            osl.update()
-            if t > WAIT:
-                break
+            
         osl.clock.stop()
         # knee_enc._stop()
         torque_sensor_thread.stop()
         torque_sensor_thread.join()
         time.sleep(3)
-        picam2.stop_preview()
-        picam2.stop_recording()
+        # picam2.stop_preview()
+        # picam2.stop_recording()
         print("Test complete :)")
