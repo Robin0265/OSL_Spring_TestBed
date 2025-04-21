@@ -132,7 +132,7 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     # Calculate camera_angs 
     if not os.path.exists(test_folder + '/camera_enabled_angles.csv'):
 
-        blue_cam_angs, red_cam_angs, cam_time = test(file = test_folder + '/Stiffness_Measure_250412_120729.h264',
+        blue_cam_angs, red_cam_angs, cam_time = test(file = test_folder + '/Stiffness_Measure_250419_210045.h264',
                                                     inner_mask_loc = inner_mask,
                                                     outer_mask_loc = outer_mask,
                                                     pre_mask_save_loc = test_folder + '/camera_enabled_pre_mask.png',
@@ -209,10 +209,10 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
 
     red_cam_pks = np.hstack((cam_start_ind,blue_cam_pks,cam_end_ind))
     red_enc_pks = np.hstack((enc_start_ind,blue_enc_pks,enc_end_ind))
-    cam_start_ind = 1614
-    cam_end_ind = 7460
-    enc_start_ind = 2508
-    enc_end_ind = 58508
+    cam_start_ind = 912 - 1
+    cam_end_ind = 6689 - 1
+    enc_start_ind = 2515 - 1
+    enc_end_ind = 58511-1
     plt.plot(cam_time[cam_start_ind:cam_end_ind] - cam_time[cam_start_ind],blue_cam_angs[cam_start_ind:cam_end_ind])
     plt.plot(enc_time[enc_start_ind:enc_end_ind] - enc_time[enc_start_ind],blue_enc_angs[enc_start_ind:enc_end_ind])
     plt.plot(cam_time[cam_start_ind:cam_end_ind] - cam_time[cam_start_ind],red_cam_angs[cam_start_ind:cam_end_ind])
@@ -313,7 +313,7 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     plt.ylabel('Angle (deg)')
     plt.title('Angle Calibration')
 
-    defl = -(blue_cam_ang_cal - red_cam_ang_cal)*180/np.pi
+    # defl = -(blue_cam_ang_cal - red_cam_ang_cal)*180/np.pi
     # torque_res = np.interp(cam_time, trq_time, torque)
     
     enc_defl = -(blue_enc_angs - red_enc_angs)*180/np.pi
@@ -333,8 +333,10 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     plt.xlabel('Deflection (deg)')
     plt.ylabel('Torque (Nm)')
 
-    # with open(test_folder + defl_trq_file, 'w') as f:
-    #     np.savetxt(f, defl_torque, fmt='%.7f', delimiter=", ")
+    with open(test_folder + defl_trq_file, 'w') as f:
+        np.savetxt(f, np.vstack(
+            (-(blue_cam_ang_cal_res - red_cam_ang_cal_res)*180/np.pi,torque[enc_start_ind:enc_end_ind])
+            ).T, fmt='%.7f', delimiter=", ")
 
 
 
@@ -367,8 +369,8 @@ if __name__ == '__main__':
     #         defl_trq_file='S1_14_19.csv')    
 
     main(cal_folder='./cal_folder',
-            inner_mask = 'mask_inner_0405.png',
-            outer_mask = 'mask_outer_0405.png',
+            inner_mask = 'mask_inner_0419.png',
+            outer_mask = 'mask_outer_0419.png',
             test_folder='./meas_folder',
         )
     plt.show()
