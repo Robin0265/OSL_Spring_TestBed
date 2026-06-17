@@ -9,10 +9,10 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
-            "args": [
-                "--username", "Jeremy",
-                "--account", "Stackoverflow"
-            ],
+            // "args": [
+            //     "--username", "Jeremy",
+            //     "--account", "Stackoverflow"
+            // ],
             "console": "integratedTerminal"
         },
         {
