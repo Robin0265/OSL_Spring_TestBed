@@ -78,6 +78,7 @@ if camera_info:
     picam2 = Picamera2()
     picam2.configure(
         picam2.create_video_configuration(
+            raw={"size": (1640, 1232)},
             main={"size": (640, 480)},
         )
     )
