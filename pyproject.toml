@@ -3,7 +3,7 @@ name = "osl-spring-testbed"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "adafruit-blinka>=9.1.0",
     "adafruit-circuitpython-ads1x15>=3.0.4",
@@ -12,5 +12,7 @@ dependencies = [
     "numpy>=1.25.0",
     "opencv-python>=4.11.0.86,<4.12.0",
     "opensourceleg[dephy]==3.5.0",
+    "picamera2>=0.3.36",
     "scipy>=1.17.1",
+    "smbus2>=0.6.1",
 ]

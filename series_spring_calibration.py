@@ -70,10 +70,10 @@ osl = OpenSourceLeg(
 
 clock = SoftRealtimeLoop(dt=DT, report=True)
 logger = Logger(log_path="./logs", file_name=file_name)
-picam2 = None
-encoder = None
 camera_available = False
 camera_info = Picamera2.global_camera_info()
+picam2 = None
+encoder = None
 if camera_info:
     picam2 = Picamera2()
     picam2.configure(
@@ -85,7 +85,8 @@ if camera_info:
     picam2.set_controls({"FrameRate": 30})
     encoder = H264Encoder()
     camera_available = True
-else:
+
+if not camera_available:
     print("WARNING: No Picamera2 camera detected; continuing without video recording.")
 
 # torqueSensor = Big100NmFutek()
