@@ -76,7 +76,7 @@ class CircleTracker():
 
         M = cv2.moments(self.myimg)
 
-        if M['m00']<265000:
+        if M['m00']<400000:
             # acknowledge loss of tracking
             print("loss of tracking for tracker %d"%self.tracker_index)
             self.legitimacy=0.0
@@ -228,7 +228,7 @@ class CircleAnnotator():
     def annotate_circles(self, frame, gray, color):
         detected_circles = cv2.HoughCircles(gray, 
                        cv2.HOUGH_GRADIENT, .25, 20, param1 = 60,
-                   param2 = 20, minRadius = 18, maxRadius = 21)
+                   param2 = 20, minRadius = 23, maxRadius = 26)
         cv2.imshow('gray%d%d%d'%color , gray)
         if detected_circles is not None:
             # print("detected %d circles. Trackers: "%detected_circles.shape[1]+", ".join(["%d"%ct.tracker_index for ct in self.circle_trackers]))
@@ -309,7 +309,7 @@ def test(file='first_vido.h264',
     while(cap.isOpened()):
         ret, frame = cap.read()
         if ret ==True:
-            frame=frame[:310, 35:635]
+            frame=frame[:303, 30:-1]
             
             if mask is None:
                 cv2.imwrite(pre_mask_save_loc, frame)
@@ -319,8 +319,8 @@ def test(file='first_vido.h264',
                 mask = cv2.bitwise_or(inner_mask, outer_mask)
             frame = cv2.bitwise_and(frame, mask)
             grayframe = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            gray0 = cv2.blur(cv2.threshold(cv2.bitwise_and(grayframe, inner_mask[:,:,0]), 60, 255, cv2.THRESH_BINARY)[1], (5, 5))
-            gray2 = cv2.blur(cv2.threshold(cv2.bitwise_and(grayframe, outer_mask[:,:,0]), 60, 255, cv2.THRESH_BINARY)[1], (5, 5))
+            gray0 = cv2.blur(cv2.threshold(cv2.bitwise_and(grayframe, inner_mask[:,:,0]), 90, 255, cv2.THRESH_BINARY)[1], (5, 5))
+            gray2 = cv2.blur(cv2.threshold(cv2.bitwise_and(grayframe, outer_mask[:,:,0]), 90, 255, cv2.THRESH_BINARY)[1], (5, 5))
 
             # hist = cv2.calcHist([frame[:,:, 2]], [0], None, [256], [0, 256])
             # plt.plot( hist)
