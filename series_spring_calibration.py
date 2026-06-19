@@ -130,50 +130,6 @@ experiment_start_monotonic_time_ns = time.monotonic_ns()
 # tau_futek = 0.0
 
 
-def raw_data(actuator, field, default=np.nan):
-    if actuator is None:
-        return default
-    data = getattr(actuator, "_data", None)
-    if data is None:
-        return default
-    return data.get(field, default)
-
-
-def track_raw_actuator_data(tag, actuator):
-    logger.track_function(
-        [
-            lambda: raw_data(actuator, "state_time"),
-            lambda: raw_data(actuator, "sys_time"),
-            lambda: raw_data(actuator, "mot_ang"),
-            lambda: raw_data(actuator, "mot_vel"),
-            lambda: raw_data(actuator, "mot_acc"),
-            lambda: raw_data(actuator, "mot_cur"),
-            lambda: raw_data(actuator, "mot_volt"),
-            lambda: raw_data(actuator, "batt_volt"),
-            lambda: raw_data(actuator, "batt_curr"),
-            lambda: raw_data(actuator, "temperature"),
-            lambda: raw_data(actuator, "status_mn"),
-            lambda: raw_data(actuator, "status_ex"),
-            lambda: raw_data(actuator, "status_re"),
-        ],
-        [
-            f"{tag}_state_time",
-            f"{tag}_sys_time",
-            f"{tag}_mot_ang",
-            f"{tag}_mot_vel",
-            f"{tag}_mot_acc",
-            f"{tag}_mot_cur",
-            f"{tag}_mot_volt",
-            f"{tag}_batt_volt",
-            f"{tag}_batt_curr",
-            f"{tag}_temperature",
-            f"{tag}_status_mn",
-            f"{tag}_status_ex",
-            f"{tag}_status_re",
-        ],
-    )
-
-
 logger.track_function(
     [
         lambda: time.time(),
@@ -203,11 +159,6 @@ logger.track_function(
     ],
 )
 
-if has_knee:
-    track_raw_actuator_data("knee", knee)
-if has_ankle:
-    track_raw_actuator_data("ankle", ankle)
-
 log_info = [
     "output_position",
     "output_velocity",
@@ -216,14 +167,6 @@ log_info = [
     "motor_current",
     "battery_voltage",
     "battery_current",
-    "case_temperature",
-    "winding_temperature",
-    "thermal_scaling_factor",
-    "raw_thermal_current",
-    "filtered_thermal_current",
-    "raw_thermal_case_temperature",
-    "filtered_thermal_case_temperature",
-    "thermal_filter_rejections",
 ]
 if has_knee:
     logger.track_attributes(knee, log_info)
