@@ -1,5 +1,6 @@
 # Series Spring Calibration Process
 # Compatible with opensourceleg 3.5.x
+import os
 import sys
 import time
 from time import strftime
@@ -47,26 +48,54 @@ cnt = 0
 file_name = "Calibration" + strftime("%y%m%d_%H%M%S")
 video_file_name = file_name + ".h264"
 
+ACTUATOR_PORTS = {
+    "knee": "/dev/ttyACM0",
+    "ankle": "/dev/ttyACM1",
+}
+
+
+def port_is_accessible(port):
+    if not os.path.exists(port):
+        return False
+
+    try:
+        fd = os.open(port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+    except OSError:
+        return False
+
+    os.close(fd)
+    return True
+
+
+actuators = {}
+for tag, port in ACTUATOR_PORTS.items():
+    if not port_is_accessible(port):
+        print(f"WARNING: {tag} actuator port {port} is not accessible; skipping {tag}.")
+        continue
+
+    actuators[tag] = FilteredDephyActuator(
+        tag=tag,
+        port=port,
+        gear_ratio=GR_ACTPACK * GR_BOSTONGEAR,
+        frequency=FREQUENCY,
+        dephy_log=False,
+    )
+
+if not actuators:
+    raise RuntimeError("No actuators found. Check /dev/ttyACM0 and /dev/ttyACM1.")
+
+print(f"Active actuators: {', '.join(actuators)}")
+
 osl = OpenSourceLeg(
     tag="series_spring_calibration",
-    actuators={
-        "knee": FilteredDephyActuator(
-            tag="knee",
-            port="/dev/ttyACM0",
-            gear_ratio=GR_ACTPACK * GR_BOSTONGEAR,
-            frequency=FREQUENCY,
-            dephy_log=True,
-        ),
-        "ankle": FilteredDephyActuator(
-            tag="ankle",
-            port="/dev/ttyACM1",
-            gear_ratio=GR_ACTPACK * GR_BOSTONGEAR,
-            frequency=FREQUENCY,
-            dephy_log=True,
-        ),
-    },
+    actuators=actuators,
     sensors={},
 )
+
+has_knee = "knee" in osl.actuators
+has_ankle = "ankle" in osl.actuators
+knee = osl.actuators.get("knee")
+ankle = osl.actuators.get("ankle")
 
 clock = SoftRealtimeLoop(dt=DT, report=True)
 logger = Logger(log_path="./logs", file_name=file_name)
@@ -94,27 +123,90 @@ if not camera_available:
 
 position_command = 0.0
 camera_start_timestamp = 0.0
+camera_start_wall_time_ns = 0
+camera_start_monotonic_time_ns = 0
 camera_is_recording = False
+experiment_start_monotonic_time_ns = time.monotonic_ns()
 # tau_futek = 0.0
+
+
+def raw_data(actuator, field, default=np.nan):
+    if actuator is None:
+        return default
+    data = getattr(actuator, "_data", None)
+    if data is None:
+        return default
+    return data.get(field, default)
+
+
+def track_raw_actuator_data(tag, actuator):
+    logger.track_function(
+        [
+            lambda: raw_data(actuator, "state_time"),
+            lambda: raw_data(actuator, "sys_time"),
+            lambda: raw_data(actuator, "mot_ang"),
+            lambda: raw_data(actuator, "mot_vel"),
+            lambda: raw_data(actuator, "mot_acc"),
+            lambda: raw_data(actuator, "mot_cur"),
+            lambda: raw_data(actuator, "mot_volt"),
+            lambda: raw_data(actuator, "batt_volt"),
+            lambda: raw_data(actuator, "batt_curr"),
+            lambda: raw_data(actuator, "temperature"),
+            lambda: raw_data(actuator, "status_mn"),
+            lambda: raw_data(actuator, "status_ex"),
+            lambda: raw_data(actuator, "status_re"),
+        ],
+        [
+            f"{tag}_state_time",
+            f"{tag}_sys_time",
+            f"{tag}_mot_ang",
+            f"{tag}_mot_vel",
+            f"{tag}_mot_acc",
+            f"{tag}_mot_cur",
+            f"{tag}_mot_volt",
+            f"{tag}_batt_volt",
+            f"{tag}_batt_curr",
+            f"{tag}_temperature",
+            f"{tag}_status_mn",
+            f"{tag}_status_ex",
+            f"{tag}_status_re",
+        ],
+    )
+
 
 logger.track_function(
     [
         lambda: time.time(),
+        lambda: time.time_ns(),
+        lambda: time.monotonic_ns(),
+        lambda: (time.monotonic_ns() - experiment_start_monotonic_time_ns) * 1e-9,
         lambda: FREQUENCY,
         lambda: position_command,
         lambda: int(camera_available),
         lambda: camera_start_timestamp,
+        lambda: camera_start_wall_time_ns,
+        lambda: camera_start_monotonic_time_ns,
         # lambda: tau_futek,
     ],
     [
         "timestamp",
+        "wall_time_ns",
+        "monotonic_time_ns",
+        "elapsed_time",
         "frequency",
         "position_command",
         "camera_available",
         "camera_start_timestamp",
+        "camera_start_wall_time_ns",
+        "camera_start_monotonic_time_ns",
         # "tau_futek",
     ],
 )
+
+if has_knee:
+    track_raw_actuator_data("knee", knee)
+if has_ankle:
+    track_raw_actuator_data("ankle", ankle)
 
 log_info = [
     "output_position",
@@ -133,8 +225,10 @@ log_info = [
     "filtered_thermal_case_temperature",
     "thermal_filter_rejections",
 ]
-logger.track_attributes(osl.knee, log_info)
-logger.track_attributes(osl.ankle, log_info)
+if has_knee:
+    logger.track_attributes(knee, log_info)
+if has_ankle:
+    logger.track_attributes(ankle, log_info)
 
 try:
     # GPIO.output(PIN_END, GPIO.HIGH)
@@ -145,31 +239,28 @@ try:
     if camera_available:
         picam2.start_recording(encoder, video_file_name)
         camera_start_timestamp = time.time()
+        camera_start_wall_time_ns = time.time_ns()
+        camera_start_monotonic_time_ns = time.monotonic_ns()
         camera_is_recording = True
 
     with osl:
-        osl.knee.set_control_mode(CONTROL_MODES.POSITION)
-        osl.ankle.set_control_mode(CONTROL_MODES.POSITION)
-
-        osl.knee.set_position_gains(
-            kp=300,
-            ki=150,
-            kd=100,
-            ff=0,
-        )
-        osl.ankle.set_position_gains(
-            kp=300,
-            ki=150,
-            kd=100,
-            ff=0,
-        )
+        for actuator in osl.actuators.values():
+            actuator.set_control_mode(CONTROL_MODES.POSITION)
+            actuator.set_position_gains(
+                kp=300,
+                ki=150,
+                kd=100,
+                ff=0,
+            )
 
         osl.update()
-        init_pos_left = osl.ankle.output_position
-        init_pos_right = osl.knee.output_position
+        init_knee_position = knee.output_position if has_knee else 0.0
+        init_ankle_position = ankle.output_position if has_ankle else 0.0
 
-        osl.ankle.set_output_position(value=init_pos_left)
-        osl.knee.set_output_position(value=init_pos_right)
+        if has_knee:
+            knee.set_output_position(value=init_knee_position)
+        if has_ankle:
+            ankle.set_output_position(value=init_ankle_position)
 
         t_0 = 25
         A = 2 * np.pi
@@ -191,8 +282,10 @@ try:
                 if t >= 4 * t_0 + 2 * WAIT:
                     break
 
-            osl.knee.set_output_position(value=position_command + init_pos_right)
-            osl.ankle.set_output_position(value=-position_command + init_pos_left)
+            if has_knee:
+                knee.set_output_position(value=position_command + init_knee_position)
+            if has_ankle:
+                ankle.set_output_position(value=-position_command + init_ankle_position)
             logger.update()
 
         for t in clock:
