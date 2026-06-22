@@ -9,6 +9,10 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
+            "python": "${workspaceFolder}/.pixi/envs/default/python.exe",
+            "env": {
+                "PYTHONNOUSERSITE": "1"
+            },
             // "args": [
             //     "--username", "Jeremy",
             //     "--account", "Stackoverflow"
@@ -20,6 +24,10 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
+            "python": "${workspaceFolder}/.pixi/envs/default/python.exe",
+            "env": {
+                "PYTHONNOUSERSITE": "1"
+            },
             "args": ["${env:USERNAME}"],
             "console": "integratedTerminal"
         }, 

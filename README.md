@@ -1,5 +1,16 @@
 # OSL_Spring_TestBed
 
+## Pixi environment
+
+For Windows development, use Pixi instead of the old `uv` environment:
+
+```bash
+pixi run python -s --version
+pixi run python -s test_calibration_plotter.py
+```
+
+This workspace is pinned to Python 3.12 in `pixi.toml`, and `-s` is important on this machine because the Windows user site-packages contain a separate NumPy install that can override the Pixi environment if user-site imports are left enabled.
+
 ## Raspberry Pi camera environment
 
 This project uses the Raspberry Pi OS `picamera2`/`libcamera` bindings, which are Linux-only and are provided by the system Python packages rather than PyPI. `picamera2` is not managed by `uv` for this project.

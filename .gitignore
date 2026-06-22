@@ -4,6 +4,7 @@ DataLog/*
 *.log
 *.csv
 __pycache__/
+.pixi/
 *.h264
 *.png
 *.jpg
@@ -17,4 +18,6 @@ time_elapse.py
 
 *.npy
 
-test.py
+test.py# pixi environments
+.pixi/*
+!.pixi/config.toml

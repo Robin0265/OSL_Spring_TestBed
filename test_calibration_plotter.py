@@ -61,30 +61,61 @@ class SEATestbedPlotter(object):
         self._data=dict(headers=[],data=[])
         self._line_index=-1
 
-        act0_pi_time = self._get_col(act0, "state_time", 0)
-        act1_pi_time = self._get_col(act1, "state_time", 0)
-        init_pi_time = min([act0_pi_time[0], act1_pi_time[0], adc0[0,0]]) if self.has_adc else min([act0_pi_time[0], act1_pi_time[0]])
         self.initial_angle_offset = 0
 
-        self.add_line("a0_t", "pi_time", act0_pi_time-init_pi_time)
-        self.add_line("a0_ts", "State time", self._get_col(act0, "sys_time", 30, "state_time"))
-        self.add_line("a0_x", "Motor enc angle", -self._get_col(act0, "mot_ang", 7)+self._get_col(act0, "mot_ang", 7)[0])
-        self.add_line("a0_xd", "Motor enc velocity", self._get_col(act0, "mot_vel", 8))
-        self.add_line("a0_xdd", "Motor enc acceleration", self._get_col(act0, "mot_acc", 9))
-        self.add_line("a0_vm", "Motor deph voltage", self._get_col(act0, "mot_volt", 11))
-        self.add_line("a0_im", "Motor deph current", self._get_col(act0, "mot_cur", 10))
-        self.add_line("a0_vb", "Battery deph voltage", self._get_col(act0, "batt_volt", 12))
-        self.add_line("a0_ib", "Battery deph current", self._get_col(act0, "batt_curr", 13))
+        if self._is_combined_motor_log(act0) and self._same_file(act0_file, act1_file):
+            act0_pi_time = self._get_col(act0, "elapsed_time", 3, "timestamp")
+            act1_pi_time = act0_pi_time.copy()
+            init_pi_time = min([act0_pi_time[0], act1_pi_time[0], adc0[0,0]]) if self.has_adc else act0_pi_time[0]
 
-        self.add_line("a1_t", "pi_time", act1_pi_time-init_pi_time)
-        self.add_line("a1_ts", "State time", self._get_col(act1, "sys_time", 30, "state_time"))
-        self.add_line("a1_x", "Motor enc angle", -self._get_col(act1, "mot_ang", 7)+self._get_col(act1, "mot_ang", 7)[0])
-        self.add_line("a1_xd", "Motor enc velocity", self._get_col(act1, "mot_vel", 8))
-        self.add_line("a1_xdd", "Motor enc acceleration", self._get_col(act1, "mot_acc", 9))
-        self.add_line("a1_vm", "Motor deph voltage", self._get_col(act1, "mot_volt", 11))
-        self.add_line("a1_im", "Motor deph current", self._get_col(act1, "mot_cur", 10))
-        self.add_line("a1_vb", "Battery deph voltage", self._get_col(act1, "batt_volt", 12))
-        self.add_line("a1_ib", "Battery deph current", self._get_col(act1, "batt_curr", 13))
+            a0_x = self._get_col(act0, "knee[DephyActuator].output_position", 10)
+            a0_xd = self._get_col(act0, "knee[DephyActuator].output_velocity", 11)
+            a1_x = self._get_col(act1, "ankle[DephyActuator].output_position", 17)
+            a1_xd = self._get_col(act1, "ankle[DephyActuator].output_velocity", 18)
+
+            self.add_line("a0_t", "pi_time", act0_pi_time-init_pi_time)
+            self.add_line("a0_ts", "State time", self._get_col(act0, "monotonic_time_ns", 2, "elapsed_time"))
+            self.add_line("a0_x", "Motor enc angle", -a0_x+a0_x[0])
+            self.add_line("a0_xd", "Motor enc velocity", a0_xd)
+            self.add_line("a0_xdd", "Motor enc acceleration", self._differentiate(a0_xd, act0_pi_time))
+            self.add_line("a0_vm", "Motor deph voltage", self._get_col(act0, "knee[DephyActuator].motor_voltage", 13))
+            self.add_line("a0_im", "Motor deph current", self._get_col(act0, "knee[DephyActuator].motor_current", 14))
+            self.add_line("a0_vb", "Battery deph voltage", self._get_col(act0, "knee[DephyActuator].battery_voltage", 15))
+            self.add_line("a0_ib", "Battery deph current", self._get_col(act0, "knee[DephyActuator].battery_current", 16))
+
+            self.add_line("a1_t", "pi_time", act1_pi_time-init_pi_time)
+            self.add_line("a1_ts", "State time", self._get_col(act1, "monotonic_time_ns", 2, "elapsed_time"))
+            self.add_line("a1_x", "Motor enc angle", -a1_x+a1_x[0])
+            self.add_line("a1_xd", "Motor enc velocity", a1_xd)
+            self.add_line("a1_xdd", "Motor enc acceleration", self._differentiate(a1_xd, act1_pi_time))
+            self.add_line("a1_vm", "Motor deph voltage", self._get_col(act1, "ankle[DephyActuator].motor_voltage", 20))
+            self.add_line("a1_im", "Motor deph current", self._get_col(act1, "ankle[DephyActuator].motor_current", 21))
+            self.add_line("a1_vb", "Battery deph voltage", self._get_col(act1, "ankle[DephyActuator].battery_voltage", 22))
+            self.add_line("a1_ib", "Battery deph current", self._get_col(act1, "ankle[DephyActuator].battery_current", 23))
+        else:
+            act0_pi_time = self._get_col(act0, "state_time", 0)
+            act1_pi_time = self._get_col(act1, "state_time", 0)
+            init_pi_time = min([act0_pi_time[0], act1_pi_time[0], adc0[0,0]]) if self.has_adc else min([act0_pi_time[0], act1_pi_time[0]])
+
+            self.add_line("a0_t", "pi_time", act0_pi_time-init_pi_time)
+            self.add_line("a0_ts", "State time", self._get_col(act0, "sys_time", 30, "state_time"))
+            self.add_line("a0_x", "Motor enc angle", -self._get_col(act0, "mot_ang", 7)+self._get_col(act0, "mot_ang", 7)[0])
+            self.add_line("a0_xd", "Motor enc velocity", self._get_col(act0, "mot_vel", 8))
+            self.add_line("a0_xdd", "Motor enc acceleration", self._get_col(act0, "mot_acc", 9))
+            self.add_line("a0_vm", "Motor deph voltage", self._get_col(act0, "mot_volt", 11))
+            self.add_line("a0_im", "Motor deph current", self._get_col(act0, "mot_cur", 10))
+            self.add_line("a0_vb", "Battery deph voltage", self._get_col(act0, "batt_volt", 12))
+            self.add_line("a0_ib", "Battery deph current", self._get_col(act0, "batt_curr", 13))
+
+            self.add_line("a1_t", "pi_time", act1_pi_time-init_pi_time)
+            self.add_line("a1_ts", "State time", self._get_col(act1, "sys_time", 30, "state_time"))
+            self.add_line("a1_x", "Motor enc angle", -self._get_col(act1, "mot_ang", 7)+self._get_col(act1, "mot_ang", 7)[0])
+            self.add_line("a1_xd", "Motor enc velocity", self._get_col(act1, "mot_vel", 8))
+            self.add_line("a1_xdd", "Motor enc acceleration", self._get_col(act1, "mot_acc", 9))
+            self.add_line("a1_vm", "Motor deph voltage", self._get_col(act1, "mot_volt", 11))
+            self.add_line("a1_im", "Motor deph current", self._get_col(act1, "mot_cur", 10))
+            self.add_line("a1_vb", "Battery deph voltage", self._get_col(act1, "batt_volt", 12))
+            self.add_line("a1_ib", "Battery deph current", self._get_col(act1, "batt_curr", 13))
 
         if self.has_adc: self.add_line("adc_t", "ADC pi Time", adc0[:,0]-init_pi_time)
         if self.has_adc: self.add_line("adc_v", "ADC Voltage", adc0[:,1])
@@ -94,19 +125,40 @@ class SEATestbedPlotter(object):
 
     @staticmethod
     def _load_log(filename):
-        data = np.genfromtxt(filename, delimiter=",", names=True, dtype=float, encoding=None)
-        if getattr(data, "dtype", None) is not None and data.dtype.names is not None:
-            return data
-        return np.loadtxt(filename, delimiter=",", skiprows=1)
+        with open(filename, "r", encoding="utf-8") as f:
+            headers = [header.strip() for header in f.readline().strip().split(",")]
+        data = np.loadtxt(filename, delimiter=",", skiprows=1)
+        return {
+            "headers": headers,
+            "data": np.atleast_2d(data),
+        }
 
     @staticmethod
     def _get_col(data, name, fallback_idx, alt_name=None):
-        if getattr(data, "dtype", None) is not None and data.dtype.names is not None:
-            if name in data.dtype.names:
-                return np.asarray(data[name], dtype=float)
-            if alt_name is not None and alt_name in data.dtype.names:
-                return np.asarray(data[alt_name], dtype=float)
-        return np.asarray(data[:, fallback_idx], dtype=float)
+        headers = data.get("headers", [])
+        if name in headers:
+            return np.asarray(data["data"][:, headers.index(name)], dtype=float)
+        if alt_name is not None and alt_name in headers:
+            return np.asarray(data["data"][:, headers.index(alt_name)], dtype=float)
+        return np.asarray(data["data"][:, fallback_idx], dtype=float)
+
+    @staticmethod
+    def _is_combined_motor_log(data):
+        headers = set(data.get("headers", []))
+        return {
+            "knee[DephyActuator].output_position",
+            "ankle[DephyActuator].output_position",
+        }.issubset(headers)
+
+    @staticmethod
+    def _same_file(path_a, path_b):
+        return os.path.abspath(path_a) == os.path.abspath(path_b)
+
+    @staticmethod
+    def _differentiate(values, time_values):
+        if len(values) < 2:
+            return np.zeros_like(values)
+        return np.gradient(values, time_values)
 
     def add_line(self, shortname, name, value):
         self._line_index+=1
@@ -148,7 +200,7 @@ def main(cal_folder,inner_mask,outer_mask):
     # Create red_cal and blue_cal if they aren't in folder
     if not os.path.exists('blue_cal.csv') or not os.path.exists('red_cal.csv'):
         print('Do the plot_cal thing')
-        test(file = cal_folder + '/Calibration260618_104232.h264',
+        test(file = cal_folder + '/Calibration260618_235045.h264',
             inner_mask_loc = inner_mask,
             outer_mask_loc = outer_mask,
             pre_mask_save_loc = cal_folder + '/camera_calibration_pre_mask.png',
@@ -179,7 +231,7 @@ def main(cal_folder,inner_mask,outer_mask):
     # Calculate camera_angs 
     if not os.path.exists(cal_folder + '/camera_enabled_angles.csv'):
 
-        blue_cam_angs, red_cam_angs, cam_time = test(file = cal_folder + '/Calibration260618_104232.h264',
+        blue_cam_angs, red_cam_angs, cam_time = test(file = cal_folder + '/Calibration260618_235045.h264',
                                                     inner_mask_loc = inner_mask,
                                                     outer_mask_loc = outer_mask,
                                                     pre_mask_save_loc = cal_folder + '/camera_calibration_pre_mask.png',
@@ -199,7 +251,7 @@ def main(cal_folder,inner_mask,outer_mask):
         red_cam_angs = cam_enabled_angs[:,2]
 
     # Read encoder_angs from SEA_Testbed_Plotter
-    stp = SEATestbedPlotter(cal_folder + '/Data2026-06-18_10h42m41s_.csv',cal_folder + '/Data2026-06-18_10h42m41s_.csv')
+    stp = SEATestbedPlotter(cal_folder + '/Calibration260618_235045.csv',cal_folder + '/Calibration260618_235045.csv')
     red_enc_angs = - stp.theta_1
     blue_enc_angs = - stp.theta_0
     enc_time = stp.a0_t
