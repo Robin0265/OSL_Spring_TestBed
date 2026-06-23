@@ -4,5 +4,5 @@
     "python.envFile": "${workspaceFolder}/.vscode/.env",
     "python.terminal.activateEnvironment": true,
     "python.analysis.autoImportCompletions": false,
-    "python-envs.defaultEnvManager": "ms-python.python:system"
+    "python-envs.defaultEnvManager": "ms-python.python:venv"
 }

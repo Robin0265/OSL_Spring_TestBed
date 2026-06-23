@@ -19,8 +19,15 @@ class Big100NmFutek(AdcManager):
             start_time = time()
             while time() - start_time < 5:
                 self.update()
-                voltage_cal.append(self.volts)
-                
+                if self.last_read_ok:
+                    voltage_cal.append(self.volts)
+
+            if not voltage_cal:
+                raise OSError(
+                    "No valid ADS1115 voltage samples during Futek calibration. "
+                    "Check I2C wiring, ADS1115 power/ground, address, and run `i2cdetect -y 1`."
+                )
+
             avg_volt = np.mean(np.array(voltage_cal))
             bias = avg_volt - 2.5
             print("Bias: {} V".format(bias))
