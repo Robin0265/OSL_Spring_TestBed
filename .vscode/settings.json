@@ -4,5 +4,6 @@
     "python.envFile": "${workspaceFolder}/.vscode/.env",
     "python.terminal.activateEnvironment": true,
     "python.analysis.autoImportCompletions": false,
-    "python-envs.defaultEnvManager": "ms-python.python:venv"
+    "python-envs.defaultEnvManager": "renan-r-santos.pixi-code:pixi",
+    "python-envs.defaultPackageManager": "renan-r-santos.pixi-code:pixi"
 }
