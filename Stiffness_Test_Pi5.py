@@ -213,10 +213,10 @@ if __name__ == "__main__":
             # i_des = np.linspace(1000, 3000, 4)
             pos_des = np.array(
                 [
+                    5 / 180 * np.pi,
                     10 / 180 * np.pi,
                     15 / 180 * np.pi,
                     20 / 180 * np.pi,
-                    25 / 180 * np.pi,
                 ]
             )
             t_test = 7
@@ -263,21 +263,21 @@ if __name__ == "__main__":
 
                     print(knee.motor_current)
                     # SAFETY CHECKS
-                    if knee.winding_temperature > 100:
+                    if knee.winding_temperature > 90:
                         raise ValueError("Motor above thermal limit. Quitting!")
                     # Check battery voltages
                     if knee.battery_voltage / 1000 > 43:
                         print("Knee voltage {}".format(1 / 1000 * knee.battery_voltage))
                         raise ValueError("Battery voltage above 43 V")
-                    if knee.battery_voltage / 1000 < 20:
+                    if knee.battery_voltage / 1000 < 25:
                         print("Knee voltage {}".format(1 / 1000 * knee.battery_voltage))
-                        raise ValueError("Battery voltage below 32 V")
-                    if np.abs(tau_futek) > 90:
+                        raise ValueError("Battery voltage below 25 V")
+                    if np.abs(tau_futek) > 45:
                         print("Torque too high: {} Nm".format(tau_futek))
                         break
-                    if knee.motor_current / 1000 > 8:
-                        print("Knee Current {}".format(1 / 1000 * knee.motor_current))
-                        raise ValueError("Motor Current above 6 A")
+                    if np.abs(knee.motor_current)/1000 > 8:
+                        print("Motor current too high: {} A".format(knee.motor_current))
+                        break
 
                     knee.set_output_position(init_pos + pos_command)
                     logger.update()
