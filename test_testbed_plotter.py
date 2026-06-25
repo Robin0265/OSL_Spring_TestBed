@@ -532,8 +532,8 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     # Second calibration, interpolate cam_angs to enc_angs
     inv_blue = np.loadtxt(cal_folder + '/inv_blue.csv', delimiter=',')
     inv_red = np.loadtxt(cal_folder + '/inv_red.csv', delimiter=',')
-    inv_blue = np.flip(inv_blue, axis=0)
-    inv_red = np.flip(inv_red, axis=0)
+    inv_blue = inv_blue[np.argsort(inv_blue[:,0])]
+    inv_red = inv_red[np.argsort(inv_red[:,0])]
 
     blue_cam_ang_cal = np.interp(new_blue_cam_angs, inv_blue[:,0], inv_blue[:,1])
     red_cam_ang_cal = np.interp(new_red_cam_angs, inv_red[:,0], inv_red[:,1])
