@@ -27,7 +27,7 @@ from hardware.filtered_dephy import FilteredDephyActuator  # noqa: E402
 from hardware.futek import Big100NmFutek  # noqa: E402
 
 
-GR_ACTPACK = 1
+GR_ACTPACK = 9
 GR_TRANS = 75 / 11
 GR_BOSTONGEAR = 50
 
@@ -40,8 +40,8 @@ KNEE_PORT = "/dev/ttyACM0"
 NUM_CYCLES = 4
 MAX_DEFLECTION_RAD = np.deg2rad(15)  # Maximum deflection in radians
 DEFLECTION_TOL_RAD = np.deg2rad(0.5)
-COMMAND_DEFLECTION_MARGIN_RAD = np.deg2rad(1.0)
-MAX_TORQUE_NM = 150 * np.deg2rad(15)
+COMMAND_DEFLECTION_MARGIN_RAD = np.deg2rad(2.5)
+MAX_TORQUE_NM = 150 * np.deg2rad(15)  # Maximum torque in Nm
 TORQUE_TARGET_MARGIN_NM = 2.0
 CYCLE_TIME = 28.0
 HOLD_TIMEOUT_SEC = 5.0
