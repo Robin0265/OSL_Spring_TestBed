@@ -403,7 +403,7 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     # Calculate camera_angs 
     if not os.path.exists(test_folder + '/camera_enabled_angles.csv'):
 
-        blue_cam_angs, red_cam_angs, cam_time = test(file = test_folder + '/Stiffness_Measure_260625_005652.h264',
+        blue_cam_angs, red_cam_angs, cam_time = test(file = test_folder + '/Stiffness_Measure_260625_215007.h264',
                                                     inner_mask_loc = inner_mask,
                                                     outer_mask_loc = outer_mask,
                                                     pre_mask_save_loc = test_folder + '/camera_enabled_pre_mask.png',
@@ -441,8 +441,8 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
 
 
     # Read encoder_angs from SEA_Testbed_Plotter
-    stp = SEATestbedPlotter(test_folder + '/Stiffness_Measure_260625_005652.csv',
-                            test_folder + '/Stiffness_Measure_260625_005652.csv',
+    stp = SEATestbedPlotter(test_folder + '/Stiffness_Measure_260625_215007.csv',
+                            test_folder + '/Stiffness_Measure_260625_215007.csv',
                             # test_folder + '/camera_enabled_volts.csv'
                             )
     red_enc_angs = -(stp.theta_1 - stp.theta_1[0])

@@ -525,7 +525,7 @@ def main(cal_folder,inner_mask,outer_mask):
     # Calculate camera_angs 
     if not os.path.exists(cal_folder + '/camera_enabled_angles.csv'):
 
-        blue_cam_angs, red_cam_angs, cam_time = test(file = cal_folder + '/Calibration260624_232636.h264',
+        blue_cam_angs, red_cam_angs, cam_time = test(file = cal_folder + '/Calibration260625_203019.h264',
                                                     inner_mask_loc = inner_mask,
                                                     outer_mask_loc = outer_mask,
                                                     pre_mask_save_loc = cal_folder + '/camera_calibration_pre_mask.png',
@@ -545,7 +545,7 @@ def main(cal_folder,inner_mask,outer_mask):
         red_cam_angs = cam_enabled_angs[:,2]
 
     # Read encoder_angs from SEA_Testbed_Plotter
-    stp = SEATestbedPlotter(cal_folder + '/Calibration260624_232636.csv',cal_folder + '/Calibration260624_232636.csv')
+    stp = SEATestbedPlotter(cal_folder + '/Calibration260625_203019.csv',cal_folder + '/Calibration260625_203019.csv')
     red_enc_angs = - stp.theta_1
     blue_enc_angs = - stp.theta_0
     enc_time = stp.a0_t
