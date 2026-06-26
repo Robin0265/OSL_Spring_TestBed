@@ -213,10 +213,10 @@ if __name__ == "__main__":
             # i_des = np.linspace(1000, 3000, 4)
             pos_des = np.array(
                 [
-                    5 / 180 * np.pi,
-                    10 / 180 * np.pi,
+                    4 / 180 * np.pi,
+                    8 / 180 * np.pi,
+                    12 / 180 * np.pi,
                     15 / 180 * np.pi,
-                    20 / 180 * np.pi,
                 ]
             )
             t_test = 7
