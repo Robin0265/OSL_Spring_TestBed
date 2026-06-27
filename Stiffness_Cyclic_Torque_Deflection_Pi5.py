@@ -40,7 +40,7 @@ KNEE_PORT = "/dev/ttyACM0"
 NUM_CYCLES = 4
 MAX_DEFLECTION_RAD = np.deg2rad(15)  # Maximum deflection in radians
 DEFLECTION_TOL_RAD = np.deg2rad(0.5)
-COMMAND_DEFLECTION_MARGIN_RAD = np.deg2rad(2.5)
+COMMAND_DEFLECTION_MARGIN_RAD = np.deg2rad(5)
 MAX_TORQUE_NM = 150 * np.deg2rad(15)  # Maximum torque in Nm
 TORQUE_TARGET_MARGIN_NM = 2.0
 CYCLE_TIME = 24.0
@@ -48,7 +48,7 @@ HOLD_TIMEOUT_SEC = 5.0
 
 # Hard safety limits. These are independent from the requested test criteria.
 TORQUE_SAFETY_LIMIT_NM = 45.0
-MOTOR_CURRENT_SAFETY_LIMIT_A = 8.0
+MOTOR_CURRENT_SAFETY_LIMIT_A = 8.5
 WINDING_TEMPERATURE_SAFETY_LIMIT_C = 90.0
 BATTERY_VOLTAGE_MAX_V = 43.0
 BATTERY_VOLTAGE_MIN_V = 25.0
@@ -112,7 +112,7 @@ def check_safety(knee, tau_futek):
     if np.abs(tau_futek) > TORQUE_SAFETY_LIMIT_NM:
         raise ValueError("Torque too high: {} Nm".format(tau_futek))
     if np.abs(knee.motor_current) / 1000 > MOTOR_CURRENT_SAFETY_LIMIT_A:
-        raise ValueError("Motor current too high: {} A".format(knee.motor_current))
+        raise ValueError("Motor current too high: {} A".format(knee.motor_current * 1 / 1000))
 
 
 if __name__ == "__main__":
@@ -293,10 +293,10 @@ if __name__ == "__main__":
 
             knee.set_control_mode(CONTROL_MODES.POSITION)
             knee.set_position_gains(
-                kp=350,
-                ki=300,
-                kd=50,
-                ff=0,
+                kp=450,
+                ki=500,
+                kd=0,
+                ff=-50,
             )
 
             osl.update()

@@ -275,8 +275,8 @@ if __name__ == "__main__":
                     if np.abs(tau_futek) > 45:
                         print("Torque too high: {} Nm".format(tau_futek))
                         break
-                    if np.abs(knee.motor_current)/1000 > 8:
-                        print("Motor current too high: {} A".format(knee.motor_current))
+                    if np.abs(knee.motor_current)/1000 > 8.5:
+                        print("Motor current too high: {} A".format(knee.motor_current * 1 / 1000))
                         break
 
                     knee.set_output_position(init_pos + pos_command)
