@@ -1,5 +1,4 @@
 import busio
-import board
 import adafruit_ads1x15.ads1115 as ADS
 from adafruit_ads1x15.ads1x15 import Pin
 from adafruit_ads1x15.analog_in import AnalogIn
@@ -7,10 +6,12 @@ import csv
 import traceback
 import time
 
+from adafruit_blinka.board.raspberrypi.raspi_40pin import SCL, SDA
+
 
 class AdcManager(object):
     def __init__(self, csv_file_name=None, read_retries=3, retry_delay=0.002):
-        self.i2c = busio.I2C(board.SCL, board.SDA)
+        self.i2c = busio.I2C(SCL, SDA)
         self.ads = ADS.ADS1115(self.i2c, data_rate=860)
         self.chan = AnalogIn(self.ads, Pin.A0)
         self.read_retries = read_retries

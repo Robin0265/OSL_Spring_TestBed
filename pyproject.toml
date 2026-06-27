@@ -3,11 +3,10 @@ name = "osl-spring-testbed"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "adafruit-blinka>=9.1.0",
     "adafruit-circuitpython-ads1x15>=3.0.4",
-    "board>=1.0",
     "matplotlib>=3.11.0",
     "numpy>=1.25.0",
     "opencv-python>=4.11.0.86,<4.12.0",
