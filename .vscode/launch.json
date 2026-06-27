@@ -9,7 +9,7 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
-            "python": "${workspaceFolder}/.pixi/envs/default/python.exe",
+            "python": "${workspaceFolder}/.pixi/envs/default/bin/python",
             "env": {
                 "PYTHONNOUSERSITE": "1"
             },
@@ -24,7 +24,7 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
-            "python": "${workspaceFolder}/.pixi/envs/default/python.exe",
+            "python": "${workspaceFolder}/.pixi/envs/default/bin/python",
             "env": {
                 "PYTHONNOUSERSITE": "1"
             },
@@ -33,5 +33,5 @@
         }, 
         
     ], 
-    "sudo": true
+    "compounds": []
 }

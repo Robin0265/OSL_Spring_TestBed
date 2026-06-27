@@ -8,7 +8,11 @@ from Vision.video_reading_test import test, CircleAnnotator, CircleTracker
 import os.path
 from scipy.signal import argrelextrema
 from scipy.signal import find_peaks
-from test_calibration_plotter import fit_camera_time_alignment
+from test_calibration_plotter import (
+    fit_camera_time_alignment,
+    _apply_directional_inverse_lookup,
+    _load_directional_inverse_model,
+)
 # from scipy.integrate import cumtrapz
 
 # Model Parameters (tuned here)
@@ -529,14 +533,20 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     plt.show()
 
 
-    # Second calibration, interpolate cam_angs to enc_angs
-    inv_blue = np.loadtxt(cal_folder + '/inv_blue.csv', delimiter=',')
-    inv_red = np.loadtxt(cal_folder + '/inv_red.csv', delimiter=',')
-    inv_blue = inv_blue[np.argsort(inv_blue[:,0])]
-    inv_red = inv_red[np.argsort(inv_red[:,0])]
+    # Second calibration, apply the direction-aware camera-to-encoder inverse map.
+    inv_blue = _load_directional_inverse_model(cal_folder + '/inv_blue_directional.npz')
+    inv_red = _load_directional_inverse_model(cal_folder + '/inv_red_directional.npz')
 
-    blue_cam_ang_cal = np.interp(new_blue_cam_angs, inv_blue[:,0], inv_blue[:,1])
-    red_cam_ang_cal = np.interp(new_red_cam_angs, inv_red[:,0], inv_red[:,1])
+    blue_cam_ang_cal = _apply_directional_inverse_lookup(
+        np.unwrap(new_blue_cam_angs),
+        aligned_cam_time,
+        inv_blue,
+    )
+    red_cam_ang_cal = _apply_directional_inverse_lookup(
+        np.unwrap(new_red_cam_angs),
+        aligned_cam_time,
+        inv_red,
+    )
 
     valid_enc = (new_enc_time >= aligned_cam_time[0]) & (new_enc_time <= aligned_cam_time[-1])
     if np.count_nonzero(valid_enc) < 2:
