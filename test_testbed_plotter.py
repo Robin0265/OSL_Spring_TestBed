@@ -1,4 +1,6 @@
 from operator import neg
+import importlib.util
+import json
 import numpy as np
 import matplotlib.pyplot as plt
 # from model_params import *
@@ -6,6 +8,8 @@ import scipy.io
 from Vision.plot_cal import circle_find_3_points
 from Vision.video_reading_test import test, CircleAnnotator, CircleTracker
 import os.path
+from pathlib import Path
+import sys
 from scipy.signal import argrelextrema
 from scipy.signal import find_peaks
 from scipy.interpolate import PchipInterpolator
@@ -19,6 +23,32 @@ from test_calibration_plotter import (
     _motion_direction,
 )
 # from scipy.integrate import cumtrapz
+
+def _load_spring_model_fit_module():
+    module_path = Path(__file__).resolve().parent / "math" / "spring_model_fit.py"
+    spec = importlib.util.spec_from_file_location("osl_spring_model_fit", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError("Unable to load spring model fitter from %s" % module_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+spring_model_fit = _load_spring_model_fit_module()
+fit_all_spring_models = spring_model_fit.fit_all_spring_models
+
+
+def _json_ready(value):
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {key: _json_ready(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_ready(item) for item in value]
+    return value
 
 # Model Parameters (tuned here)
 rad_2_enc = 2607.59458762
@@ -810,7 +840,7 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     # Calculate camera_angs 
     if not os.path.exists(test_folder + '/camera_enabled_angles.csv'):
 
-        blue_cam_angs, red_cam_angs, cam_time = test(file = test_folder + '/Stiffness_Measure_260627_195643.h264',
+        blue_cam_angs, red_cam_angs, cam_time = test(file = test_folder + '/Stiffness_FrequencyRamp_260628_011648.h264',
                                                     inner_mask_loc = inner_mask,
                                                     outer_mask_loc = outer_mask,
                                                     pre_mask_save_loc = test_folder + '/camera_enabled_pre_mask.png',
@@ -848,8 +878,8 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
 
 
     # Read encoder_angs from SEA_Testbed_Plotter
-    stp = SEATestbedPlotter(test_folder + '/Stiffness_Measure_260627_195643.csv',
-                            test_folder + '/Stiffness_Measure_260627_195643.csv',
+    stp = SEATestbedPlotter(test_folder + '/Stiffness_FrequencyRamp_260628_011648.csv',
+                            test_folder + '/Stiffness_FrequencyRamp_260628_011648.csv',
                             # test_folder + '/camera_enabled_volts.csv'
                             )
     red_enc_angs = -(stp.theta_1 - stp.theta_1[0])
@@ -1064,9 +1094,10 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
         'Encoder deflection',
         'Time-shift corrected directional optical deflection',
     ]
-    if svd_candidate_available:
-        plt.plot(plot_time_rel, optical_defl_svd, color='tab:green')
-        figure3_legend.append('SVD-regularized optical candidate')
+    # SVD diagnostic visual disabled for now; keep this handy if we revisit it.
+    # if svd_candidate_available:
+    #     plt.plot(plot_time_rel, optical_defl_svd, color='tab:green')
+    #     figure3_legend.append('SVD-regularized optical candidate')
     plt.legend(figure3_legend)
     plt.title('Deflection Measurement Comparison')
     plt.xlabel('Time (s)')
@@ -1093,16 +1124,17 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     plt.subplot(2, 1, 2)
     plt.plot(plot_time_rel[side_zoom], enc_defl[side_zoom], color='tab:blue')
     plt.plot(plot_time_rel[side_zoom], optical_defl_directional[side_zoom], color='0.25')
-    if svd_candidate_available:
-        plt.plot(plot_time_rel[side_zoom], optical_defl_svd[side_zoom], color='tab:green')
+    # SVD diagnostic visual disabled for now; keep this handy if we revisit it.
+    # if svd_candidate_available:
+    #     plt.plot(plot_time_rel[side_zoom], optical_defl_svd[side_zoom], color='tab:green')
     plt.plot(plot_time_rel[side_zoom], optical_defl_raw[side_zoom], color='tab:olive')
     plt.axvline(plot_time_rel[peak_idx], color='0.5', linewidth=1)
     side_zoom_legend = [
         'Encoder deflection',
         'Time-shift corrected red-minus-blue',
     ]
-    if svd_candidate_available:
-        side_zoom_legend.append('SVD candidate red-minus-blue')
+    # if svd_candidate_available:
+    #     side_zoom_legend.append('SVD candidate red-minus-blue')
     side_zoom_legend.append(
         'Raw red-minus-blue',
     )
@@ -1114,9 +1146,10 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     plt.figure(4)
     plt.plot(plot_time_rel, optical_residual, color='0.25')
     residual_legend = ['Time-shift corrected optical - encoder']
-    if svd_candidate_available:
-        plt.plot(plot_time_rel, svd_residual, color='tab:green')
-        residual_legend.append('SVD candidate optical - encoder')
+    # SVD diagnostic visual disabled for now; keep this handy if we revisit it.
+    # if svd_candidate_available:
+    #     plt.plot(plot_time_rel, svd_residual, color='tab:green')
+    #     residual_legend.append('SVD candidate optical - encoder')
     plt.legend(residual_legend)
     plt.title('Directional Optical Residual')
     plt.xlabel('Time (s)')
@@ -1176,12 +1209,253 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
         'Motor Encoder Measurement',
         'Optical Time-Shift Corrected Directional Inverse',
     ]
-    if svd_candidate_available:
-        plt.plot(optical_defl_svd, torque_plot)
-        torque_legend.append('Optical SVD-Regularized Candidate')
+    # SVD diagnostic visual disabled for now; keep this handy if we revisit it.
+    # if svd_candidate_available:
+    #     plt.plot(optical_defl_svd, torque_plot)
+    #     torque_legend.append('Optical SVD-Regularized Candidate')
     plt.legend(torque_legend)
     plt.xlabel('Deflection (deg)')
     plt.ylabel('Torque (Nm)')
+
+    spring_fits = fit_all_spring_models(optical_defl_directional, torque_plot)
+    print(
+        "optical spring fit RMS torque: linear=%.6f Nm, simple=%.6f Nm, logit=%.6f Nm"
+        % (
+            spring_fits["linear"]["rms_tau_nm"],
+            spring_fits["simple"]["rms_tau_nm"],
+            spring_fits["logit"]["rms_tau_nm"],
+        )
+    )
+    print("simple spring fit params:", spring_fits["simple"]["params"])
+    print("logit spring fit params:", spring_fits["logit"]["params"])
+    simple_x0_deg = np.rad2deg(spring_fits["simple"]["params"]["theta_offset_rad"])
+    logit_x0_deg = np.rad2deg(spring_fits["logit"]["params"]["theta_offset_rad"])
+    simple_h_deg = np.rad2deg(spring_fits["simple"]["params"]["half_backlash_rad"])
+    logit_h_deg = np.rad2deg(spring_fits["logit"]["params"]["half_backlash_rad"])
+    print(
+        "optical spring fit shifts: simple x0=%.4f deg, y0=%.6f Nm, h=%.4f deg; "
+        "logit x0=%.4f deg, y0=%.6f Nm, h=%.4f deg"
+        % (
+            simple_x0_deg,
+            spring_fits["simple"]["params"]["torque_offset_nm"],
+            simple_h_deg,
+            logit_x0_deg,
+            spring_fits["logit"]["params"]["torque_offset_nm"],
+            logit_h_deg,
+        )
+    )
+
+    linear_fit = spring_fits["linear"]
+    simple_fit = spring_fits["simple"]
+    logit_fit = spring_fits["logit"]
+    theta_fit_rad = logit_fit["theta_rad"]
+    torque_fit_nm = logit_fit["tau_nm"]
+
+    simple_params = simple_fit["params"]
+    simple_x_fit_rad = theta_fit_rad - simple_params["theta_offset_rad"]
+    simple_y_fit_nm = torque_fit_nm - simple_params["torque_offset_nm"]
+    simple_tau_fit_nm = spring_model_fit.calc_simple_backlash_torque(
+        simple_x_fit_rad,
+        simple_params["stiffness_nm_per_rad"],
+        simple_params["half_backlash_rad"],
+    )
+
+    logit_params = logit_fit["params"]
+    logit_x_fit_rad = theta_fit_rad - logit_params["theta_offset_rad"]
+    logit_y_fit_nm = torque_fit_nm - logit_params["torque_offset_nm"]
+    logit_tau_fit_nm = spring_model_fit.calc_logit_backlash_torque(
+        logit_x_fit_rad,
+        logit_params["stiffness_nm_per_rad"],
+        logit_params["half_backlash_rad"],
+        logit_params["logit_buffer_rad"],
+    )
+
+    logit_theta_offset = logit_fit["params"]["theta_offset_rad"]
+    logit_torque_offset = logit_fit["params"]["torque_offset_nm"]
+    linear_stiffness = linear_fit["params"]["stiffness_nm_per_rad"]
+    linear_torque_offset = linear_fit["params"]["torque_offset_nm"]
+    linear_centered_tau_hat = (
+        linear_stiffness * (logit_x_fit_rad + logit_theta_offset)
+        + linear_torque_offset
+        - logit_torque_offset
+    )
+
+    fig10 = plt.figure(10, figsize=(14, 8), dpi=150)
+    fig10.clf()
+    fig10.subplots_adjust(right=0.78)
+    ax10 = fig10.add_subplot(111)
+    ax10.plot(
+        np.rad2deg(logit_x_fit_rad),
+        logit_y_fit_nm,
+        color='0.25',
+        linewidth=2,
+    )
+    ax10.plot(
+        np.rad2deg(logit_x_fit_rad),
+        linear_centered_tau_hat,
+        color='tab:blue',
+        linewidth=2,
+    )
+    ax10.plot(
+        np.rad2deg(simple_x_fit_rad),
+        simple_tau_fit_nm,
+        color='tab:orange',
+        linewidth=2,
+    )
+    ax10.plot(
+        np.rad2deg(logit_x_fit_rad),
+        logit_tau_fit_nm,
+        color='tab:green',
+        linewidth=2,
+    )
+    ax10.legend([
+        'Optical Measurement',
+        'Linear Fit',
+        'Simple Backlash Fit',
+        'Logit Backlash Fit',
+    ])
+    ax10.set_xlabel('Centered Optical Deflection (deg)')
+    ax10.set_ylabel('Centered Torque (Nm)')
+    ax10.set_title('Centered Optical Tau-Theta Spring Model Fits')
+
+    linear_k = linear_fit["params"]["stiffness_nm_per_rad"]
+    simple_k = simple_params["stiffness_nm_per_rad"]
+    logit_k = logit_params["stiffness_nm_per_rad"]
+    logit_l_deg = np.rad2deg(logit_params["logit_buffer_rad"])
+    param_note = (
+        "Model parameters\n"
+        "Linear: K=%.2f Nm/rad\n"
+        "Simple: K=%.2f Nm/rad\n"
+        "  x0=%.3f deg, y0=%.3f Nm\n"
+        "  h=%.3f deg, RMS=%.3f Nm\n"
+        "Logit: K=%.2f Nm/rad\n"
+        "  x0=%.3f deg, y0=%.3f Nm\n"
+        "  h=%.3f deg, L=%.3f deg\n"
+        "  RMS=%.3f Nm"
+        % (
+            linear_k,
+            simple_k,
+            simple_x0_deg,
+            simple_params["torque_offset_nm"],
+            simple_h_deg,
+            simple_fit["rms_tau_nm"],
+            logit_k,
+            logit_x0_deg,
+            logit_params["torque_offset_nm"],
+            logit_h_deg,
+            logit_l_deg,
+            logit_fit["rms_tau_nm"],
+        )
+    )
+    ax10.text(
+        1.01,
+        0.98,
+        param_note,
+        transform=ax10.transAxes,
+        va='top',
+        ha='left',
+        fontsize=9,
+        bbox=dict(boxstyle='round', facecolor='white', edgecolor='0.65', alpha=0.92),
+    )
+
+    deadband_half_width_deg = simple_h_deg
+    zoom_x_min = -deadband_half_width_deg - 1.0
+    zoom_x_max = deadband_half_width_deg + 1.0
+    logit_x_deg = np.rad2deg(logit_x_fit_rad)
+    simple_x_deg = np.rad2deg(simple_x_fit_rad)
+    zoom_x_dense_deg = np.linspace(zoom_x_min, zoom_x_max, 400)
+    zoom_x_dense_rad = np.deg2rad(zoom_x_dense_deg)
+    simple_zoom_tau_nm = spring_model_fit.calc_simple_backlash_torque(
+        zoom_x_dense_rad,
+        simple_params["stiffness_nm_per_rad"],
+        simple_params["half_backlash_rad"],
+    )
+    logit_zoom_tau_nm = spring_model_fit.calc_logit_backlash_torque(
+        zoom_x_dense_rad,
+        logit_params["stiffness_nm_per_rad"],
+        logit_params["half_backlash_rad"],
+        logit_params["logit_buffer_rad"],
+    )
+    linear_zoom_tau_nm = (
+        linear_stiffness * (zoom_x_dense_rad + logit_theta_offset)
+        + linear_torque_offset
+        - logit_torque_offset
+    )
+    zoom_model_values = np.concatenate((
+        simple_zoom_tau_nm,
+        logit_zoom_tau_nm,
+    ))
+    zoom_y_min = float(np.min(zoom_model_values))
+    zoom_y_max = float(np.max(zoom_model_values))
+    zoom_y_pad = max(0.05, 0.08 * (zoom_y_max - zoom_y_min + 1e-12))
+    zoom_y_min -= zoom_y_pad
+    zoom_y_max += zoom_y_pad
+
+    spring_fit_json = {
+        "source": {
+            "test_folder": test_folder,
+            "deflection_signal": "optical_defl_directional",
+            "torque_signal": "torque_plot",
+            "measurement_csv": test_folder + defl_trq_file,
+        },
+        "units": {
+            "theta_offset": "rad",
+            "backlash": "rad",
+            "torque": "Nm",
+            "stiffness": "Nm/rad",
+        },
+        "models": {
+            "linear": {
+                "params": linear_fit["params"],
+                "rms_tau_nm": linear_fit["rms_tau_nm"],
+            },
+            "simple_backlash": {
+                "params": simple_fit["params"],
+                "rms_tau_nm": simple_fit["rms_tau_nm"],
+                "success": simple_fit["success"],
+                "message": simple_fit["message"],
+            },
+            "logit_backlash": {
+                "params": logit_fit["params"],
+                "rms_tau_nm": logit_fit["rms_tau_nm"],
+                "success": logit_fit["success"],
+                "message": logit_fit["message"],
+            },
+        },
+    }
+    spring_fit_json_path = Path(test_folder) / "spring_model_fit.json"
+    with open(spring_fit_json_path, "w", encoding="utf-8") as f:
+        json.dump(_json_ready(spring_fit_json), f, indent=2)
+    print("saved spring model fit data to %s" % spring_fit_json_path)
+
+    inset_ax = ax10.inset_axes([0.56, 0.08, 0.40, 0.42])
+    inset_ax.plot(logit_x_deg, logit_y_fit_nm, color='0.25', linewidth=1.2)
+    inset_ax.plot(zoom_x_dense_deg, linear_zoom_tau_nm, color='tab:blue', linewidth=1.2)
+    inset_ax.plot(zoom_x_dense_deg, simple_zoom_tau_nm, color='tab:orange', linewidth=1.4)
+    inset_ax.plot(zoom_x_dense_deg, logit_zoom_tau_nm, color='tab:green', linewidth=1.4)
+    inset_ax.axvspan(
+        -deadband_half_width_deg,
+        deadband_half_width_deg,
+        color='tab:orange',
+        alpha=0.12,
+    )
+    inset_ax.axvline(-deadband_half_width_deg, color='tab:orange', linewidth=0.8, linestyle='--')
+    inset_ax.axvline(deadband_half_width_deg, color='tab:orange', linewidth=0.8, linestyle='--')
+    inset_ax.set_xlim(zoom_x_min, zoom_x_max)
+    inset_ax.set_ylim(zoom_y_min, zoom_y_max)
+    inset_ax.set_title('Backlash Region Zoom', fontsize=9)
+    inset_ax.set_xlabel('Deflection (deg)', fontsize=8)
+    inset_ax.set_ylabel('Torque (Nm)', fontsize=8)
+    inset_ax.tick_params(axis='both', labelsize=8)
+    try:
+        ax10.indicate_inset_zoom(inset_ax, edgecolor='0.4')
+    except AttributeError:
+        ax10.axvline(zoom_x_min, color='0.5', linewidth=0.8, linestyle=':')
+        ax10.axvline(zoom_x_max, color='0.5', linewidth=0.8, linestyle=':')
+
+    spring_fit_png_path = Path(test_folder) / "spring_model_fit.png"
+    fig10.savefig(spring_fit_png_path, dpi=fig10.dpi, facecolor='white')
+    print("saved spring model fit figure to %s" % spring_fit_png_path)
 
     with open(test_folder + defl_trq_file, 'w') as f:
         np.savetxt(f, np.vstack(

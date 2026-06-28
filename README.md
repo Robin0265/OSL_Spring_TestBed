@@ -22,6 +22,9 @@ Key changes:
 - `test_calibration_plotter.py` builds direction-aware inverse maps, with separate positive and negative motion branches.
 - The inverse map now uses direct unwrapped lookup tables, `camera_angle_unwrapped -> encoder_angle`, rather than a wrapped `2*pi` residual correction. This avoids averaging different forward cycles into the same phase bin.
 - A bounded residual timing correction refines camera/encoder alignment after a preliminary inverse map is built.
+- A branch-gap time-shift sweep now checks whether a small camera/encoder timing offset reduces the low-angle forward/reverse branch separation. Accepted shifts are saved in `cal_folder/inverse_time_shift_metadata.json`.
+- The active calibration path uses only absolute blue and red inverse maps. Spring deflection is computed later as the difference between calibrated blue/red side angles; the older direct deflection inverse map is no longer generated or used.
+- SVD-regularized blue/red calibration models are still generated as backup diagnostics, but their visual curves are commented out because the local lookup map has been more accurate on the current datasets.
 - Figure 6 reports inverse-map residuals in degrees and prints branch-specific statistics.
 - `test_testbed_plotter.py` now loads the direction-aware `.npz` inverse models instead of treating `inv_blue.csv` and `inv_red.csv` as two-column lookup files.
 
@@ -128,6 +131,7 @@ load or regenerate camera_enabled_angles.csv
 load encoder angles from the actuator log
 align camera time to encoder time
 optionally refine timing with residual-based correction
+run a branch-gap time-shift sweep for blue/red camera channels
 resample camera angles onto encoder timestamps
 split samples by motion direction
 build direction-aware inverse maps
@@ -159,6 +163,21 @@ time correction ~= angle residual / encoder velocity
 
 This correction is bounded so it cannot distort the timeline arbitrarily.
 
+After the coarse/residual timing alignment, the script performs a small per-channel branch-gap time-shift sweep. The sweep asks whether shifting the camera samples by a fraction of a video frame makes the positive and negative calibration branches agree better near low angles. A shift is accepted only if it:
+
+```text
+meaningfully reduces low-angle branch gap
+stays within the configured frame-shift limit
+is not at the edge of the sweep
+has enough overlapping samples
+```
+
+For the current calibration set, the blue channel accepted a small positive shift while the red channel stayed at zero because the red improvement was too small to trust. The selected shifts and guardrail metrics are stored in:
+
+```text
+cal_folder/inverse_time_shift_metadata.json
+```
+
 ### Inverse mapping
 
 The inverse model is direction-aware. Separate maps are built for:
@@ -183,10 +202,38 @@ camera_phase mod 2*pi -> residual correction
 
 The unwrapped lookup is important because repeated forward cycles were not perfectly identical. Wrapping by phase forced different cycles into the same bin and increased forward-rotation residuals.
 
+The active model is absolute-side based:
+
+```text
+blue_camera_angle -> blue_encoder_angle
+red_camera_angle  -> red_encoder_angle
+spring_deflection = blue_calibrated_angle - red_calibrated_angle
+```
+
+Calibration diagnostics report the blue-minus-red convention above. The testbed torque-deflection plot currently uses the opposite sign, `red_calibrated_angle - blue_calibrated_angle`, to match the plotted torque convention.
+
+The older direct deflection inverse map:
+
+```text
+blue_camera_angle - red_camera_angle -> blue_encoder_angle - red_encoder_angle
+```
+
+is no longer generated or used. This keeps the calibration source aligned with the physical measurement path: each optical side is calibrated independently, then spring deflection is formed from the two calibrated side angles.
+
+SVD-regularized calibration models are also written:
+
+```text
+cal_folder/svd_blue_cal.npz
+cal_folder/svd_red_cal.npz
+```
+
+These are diagnostic backup models only. They use a global low-dimensional basis and are useful as a smooth sanity check, but they currently underfit local direction-dependent corrections. Their plots are intentionally commented out in both calibration and testbed figures.
+
 Figure 6 plots:
 
 ```text
 calibrated camera angle - encoder angle
+calibrated blue-red deflection - encoder blue-red deflection
 ```
 
 in degrees. It also prints branch-specific residual statistics for:
@@ -194,6 +241,8 @@ in degrees. It also prints branch-specific residual statistics for:
 ```text
 blue all / positive / negative
 red all / positive / negative
+blue-red deflection
+SVD diagnostic blue/red/blue-red
 ```
 
 ### Runtime use in test data
@@ -207,6 +256,20 @@ cal_folder/inv_red_directional.npz
 
 and applies the same direction-aware inverse mapping. The diagnostic CSV files are not used as runtime calibration sources.
 
+The active optical spring deflection in test data is:
+
+```text
+optical_deflection = red_calibrated_angle - blue_calibrated_angle
+```
+
+The sign is chosen to match the current torque-deflection plot convention. The final test export is:
+
+```text
+meas_folder/defl_torque.csv
+```
+
+and contains the active optical deflection and torque. SVD candidate curves are available in code but visually disabled.
+
 Generated calibration artifacts include:
 
 ```text
@@ -215,11 +278,37 @@ cal_folder/inv_blue.csv
 cal_folder/inv_red.csv
 cal_folder/inv_blue_directional.npz
 cal_folder/inv_red_directional.npz
+cal_folder/inverse_time_shift_metadata.json
+cal_folder/smooth_blue_cal.npz
+cal_folder/smooth_red_cal.npz
+cal_folder/svd_blue_cal.npz
+cal_folder/svd_red_cal.npz
 cal_folder/red_camera_diagnostics.csv
 cal_folder/blue_camera_diagnostics.csv
 ```
 
 `inv_blue.csv` and `inv_red.csv` are diagnostic exports. The runtime calibration model is stored in the `.npz` files.
+
+Generated testbed artifacts include:
+
+```text
+meas_folder/camera_enabled_angles.csv
+meas_folder/camera_enabled_pre_mask.png
+meas_folder/defl_torque.csv
+```
+
+The following older artifacts are stale if present and should not be treated as active calibration outputs:
+
+```text
+cal_folder/inv_deflection.csv
+cal_folder/inv_deflection_directional.npz
+cal_folder/inv_blue_timeshift_candidate.csv
+cal_folder/inv_red_timeshift_candidate.csv
+cal_folder/inv_deflection_timeshift_candidate.csv
+cal_folder/inv_blue_timeshift_candidate_directional.npz
+cal_folder/inv_red_timeshift_candidate_directional.npz
+cal_folder/inv_deflection_timeshift_candidate_directional.npz
+```
 
 To force a fresh camera calibration run, remove the generated camera/inverse files and rerun:
 

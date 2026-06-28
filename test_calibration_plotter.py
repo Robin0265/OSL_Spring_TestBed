@@ -2571,13 +2571,14 @@ def main(cal_folder,inner_mask,outer_mask):
              shifted_blue_residual_deg, 'b')
     plt.plot(plot_time_rel,
              shifted_deflection_residual_deg, 'k')
-    plt.plot(plot_time_rel,
-             svd_deflection_residual_deg, color='tab:green')
+    # SVD diagnostic visual disabled for now; keep this handy if we revisit it.
+    # plt.plot(plot_time_rel,
+    #          svd_deflection_residual_deg, color='tab:green')
     plt.legend([
         'red residual',
         'blue residual',
         'blue-red deflection residual',
-        'SVD candidate blue-red deflection residual',
+        # 'SVD candidate blue-red deflection residual',
     ])
     plt.xlabel('Time (s)')
     plt.ylabel('Camera inverse minus encoder (deg)')
