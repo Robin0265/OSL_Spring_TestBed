@@ -8,10 +8,15 @@ from Vision.video_reading_test import test, CircleAnnotator, CircleTracker
 import os.path
 from scipy.signal import argrelextrema
 from scipy.signal import find_peaks
+from scipy.interpolate import PchipInterpolator
 from test_calibration_plotter import (
     fit_camera_time_alignment,
+    _apply_inverse_lookup,
     _apply_directional_inverse_lookup,
+    _apply_svd_inverse_model,
     _load_directional_inverse_model,
+    _load_svd_inverse_model,
+    _motion_direction,
 )
 # from scipy.integrate import cumtrapz
 
@@ -98,6 +103,404 @@ def _select_alignment_signal_indices(enc_signals, relative_threshold=0.2, absolu
 def _signal_excursion(signal):
     signal = np.asarray(signal, dtype=float)
     return float(np.max(signal) - np.min(signal))
+
+def _apply_affine_inverse_model(camera_values, inverse_model):
+    camera_values = np.asarray(camera_values, dtype=float)
+    model = inverse_model["combined"]
+    return model["slope"] * camera_values + model["intercept"]
+
+def _apply_blended_inverse_model(camera_values, inverse_model):
+    return _apply_inverse_lookup(camera_values, inverse_model["combined"])
+
+def _continuity_filter(time_values, measurement, alpha=0.72, beta=0.08,
+        max_residual_deg=0.16):
+    time_values = np.asarray(time_values, dtype=float)
+    measurement = np.asarray(measurement, dtype=float)
+    if measurement.size < 2:
+        return measurement.copy()
+
+    filtered = np.empty_like(measurement)
+    filtered[0] = measurement[0]
+    velocity = (measurement[1] - measurement[0]) / (time_values[1] - time_values[0] + 1e-12)
+    max_residual = np.deg2rad(max_residual_deg)
+
+    for idx in range(1, measurement.size):
+        dt = time_values[idx] - time_values[idx - 1]
+        if dt <= 0:
+            filtered[idx] = filtered[idx - 1]
+            continue
+
+        prediction = filtered[idx - 1] + velocity * dt
+        residual = np.clip(measurement[idx] - prediction, -max_residual, max_residual)
+        filtered[idx] = prediction + alpha * residual
+        velocity = velocity + beta * residual / dt
+
+    return filtered
+
+def _apply_continuous_branch_inverse_lookup(camera_values, time_values, inverse_model):
+    positive_model = inverse_model.get("positive")
+    negative_model = inverse_model.get("negative")
+    if positive_model is None or negative_model is None:
+        return _apply_directional_inverse_lookup(camera_values, time_values, inverse_model)
+
+    camera_values = np.asarray(camera_values, dtype=float)
+    time_values = np.asarray(time_values, dtype=float)
+    direction = _motion_direction(camera_values, time_values)
+    positive_values = _apply_inverse_lookup(camera_values, positive_model)
+    negative_values = _apply_inverse_lookup(camera_values, negative_model)
+    branch_values = np.where(direction >= 0, positive_values, negative_values)
+
+    corrected = np.empty_like(branch_values)
+    corrected[0] = branch_values[0]
+    active_offset = 0.0
+    previous_direction = direction[0]
+
+    for idx in range(1, branch_values.size):
+        if direction[idx] != previous_direction:
+            active_offset = corrected[idx - 1] - branch_values[idx]
+            previous_direction = direction[idx]
+        corrected[idx] = branch_values[idx] + active_offset
+
+    return corrected
+
+def _moving_average_edge(values, window_size):
+    values = np.asarray(values, dtype=float)
+    if window_size <= 1 or values.size < 2:
+        return values.copy()
+    window_size = int(window_size)
+    if window_size % 2 == 0:
+        window_size += 1
+    pad = window_size // 2
+    padded = np.pad(values, pad, mode="edge")
+    kernel = np.ones(window_size, dtype=float) / window_size
+    return np.convolve(padded, kernel, mode="valid")
+
+def _find_zero_crossing_indices(signal, min_spacing):
+    signal = np.asarray(signal, dtype=float)
+    signs = np.sign(signal)
+    crossing_candidates = np.flatnonzero(signs[:-1] * signs[1:] < 0) + 1
+    if crossing_candidates.size == 0:
+        return crossing_candidates
+
+    selected = [int(crossing_candidates[0])]
+    for idx in crossing_candidates[1:]:
+        if idx - selected[-1] >= min_spacing:
+            selected.append(int(idx))
+    return np.array(selected, dtype=int)
+
+def _scale_raw_optical_deflection(raw_optical_deflection_deg, encoder_deflection_deg,
+        baseline_ratio=0.03):
+    raw_optical_deflection_deg = np.asarray(raw_optical_deflection_deg, dtype=float)
+    encoder_deflection_deg = np.asarray(encoder_deflection_deg, dtype=float)
+    if raw_optical_deflection_deg.size < 2:
+        return raw_optical_deflection_deg.copy(), {"scale": 1.0, "baseline_count": raw_optical_deflection_deg.size}
+
+    baseline_count = max(5, int(baseline_ratio * raw_optical_deflection_deg.size))
+    baseline_count = min(baseline_count, raw_optical_deflection_deg.size)
+    raw_zero = np.median(raw_optical_deflection_deg[:baseline_count])
+    enc_zero = np.median(encoder_deflection_deg[:baseline_count])
+    raw_centered = raw_optical_deflection_deg - raw_zero
+    enc_centered = encoder_deflection_deg - enc_zero
+    denom = np.dot(raw_centered, raw_centered)
+    scale = np.dot(raw_centered, enc_centered) / (denom + 1e-12)
+    scaled = raw_centered * scale + enc_zero
+    residual = scaled - encoder_deflection_deg
+    metrics = {
+        "scale": float(scale),
+        "baseline_count": int(baseline_count),
+        "rmse_deg": float(np.sqrt(np.mean(residual ** 2))),
+        "p95_abs_deg": float(np.percentile(np.abs(residual), 95)),
+    }
+    return scaled, metrics
+
+def _register_optical_deflection_to_encoder(
+        time_values,
+        optical_deflection_deg,
+        encoder_deflection_deg,
+        prominence_ratio=0.08,
+        min_distance_ratio=0.04,
+        offset_smooth_ratio=0.015,
+        low_signal_gate_ratio=0.12):
+    time_values = np.asarray(time_values, dtype=float)
+    optical_deflection_deg = np.asarray(optical_deflection_deg, dtype=float)
+    encoder_deflection_deg = np.asarray(encoder_deflection_deg, dtype=float)
+    if time_values.size < 4:
+        return optical_deflection_deg.copy(), np.zeros_like(optical_deflection_deg), np.array([], dtype=int), {}
+
+    n_samples = time_values.size
+    excursion = _signal_excursion(encoder_deflection_deg)
+    prominence = max(excursion * prominence_ratio, 1e-6)
+    min_distance = max(1, int(min_distance_ratio * n_samples))
+
+    peaks, _ = find_peaks(encoder_deflection_deg, prominence=prominence, distance=min_distance)
+    troughs, _ = find_peaks(-encoder_deflection_deg, prominence=prominence, distance=min_distance)
+    anchors = np.unique(np.r_[peaks, troughs]).astype(int)
+    anchors.sort()
+
+    anchor_offsets = encoder_deflection_deg[anchors] - optical_deflection_deg[anchors]
+    if anchors.size >= 4:
+        offset_model = PchipInterpolator(time_values[anchors], anchor_offsets, extrapolate=False)
+        offset = offset_model(np.clip(time_values, time_values[anchors[0]], time_values[anchors[-1]]))
+    elif anchors.size >= 2:
+        offset = np.interp(time_values, time_values[anchors], anchor_offsets)
+    else:
+        offset = np.full_like(optical_deflection_deg, np.median(anchor_offsets) if anchor_offsets.size else 0.0)
+
+    smooth_window = max(1, int(offset_smooth_ratio * n_samples))
+    offset = _moving_average_edge(offset, smooth_window)
+    gate_threshold = max(excursion * low_signal_gate_ratio, 0.5)
+    correction_weight = np.clip(np.abs(optical_deflection_deg) / (gate_threshold + 1e-12), 0.0, 1.0)
+    offset = offset * correction_weight
+    registered = optical_deflection_deg + offset
+    residual = registered - encoder_deflection_deg
+    metrics = {
+        "anchor_count": int(anchors.size),
+        "peak_count": int(peaks.size),
+        "trough_count": int(troughs.size),
+        "zero_count": 0,
+        "rmse_deg": float(np.sqrt(np.mean(residual ** 2))),
+        "p95_abs_deg": float(np.percentile(np.abs(residual), 95)),
+        "max_abs_deg": float(np.max(np.abs(residual))),
+        "offset_span_deg": float(np.max(offset) - np.min(offset)),
+        "gate_threshold_deg": float(gate_threshold),
+    }
+    return registered, offset, anchors, metrics
+
+def _detect_extrema_indices(signal, prominence_ratio=0.08, min_distance_ratio=0.04):
+    signal = np.asarray(signal, dtype=float)
+    n_samples = signal.size
+    if n_samples < 3:
+        return np.array([], dtype=int), np.array([], dtype=int)
+
+    prominence = max(_signal_excursion(signal) * prominence_ratio, 1e-6)
+    min_distance = max(1, int(min_distance_ratio * n_samples))
+    peaks, _ = find_peaks(signal, prominence=prominence, distance=min_distance)
+    troughs, _ = find_peaks(-signal, prominence=prominence, distance=min_distance)
+    return peaks.astype(int), troughs.astype(int)
+
+def _peak_time_align_optical_to_encoder(time_values, optical_deflection_deg,
+        encoder_deflection_deg, window_s=0.55, max_shift_s=0.18):
+    time_values = np.asarray(time_values, dtype=float)
+    optical_deflection_deg = np.asarray(optical_deflection_deg, dtype=float)
+    encoder_deflection_deg = np.asarray(encoder_deflection_deg, dtype=float)
+    if time_values.size < 4:
+        return optical_deflection_deg.copy(), np.zeros_like(optical_deflection_deg), np.array([], dtype=int), {}
+
+    enc_peaks, enc_troughs = _detect_extrema_indices(encoder_deflection_deg)
+    opt_peaks, opt_troughs = _detect_extrema_indices(optical_deflection_deg)
+
+    matched = []
+    used_opt = set()
+    for enc_indices, opt_indices, sign_label in (
+            (enc_peaks, opt_peaks, 1),
+            (enc_troughs, opt_troughs, -1)):
+        for enc_idx in enc_indices:
+            if opt_indices.size == 0:
+                continue
+            time_delta = np.abs(time_values[opt_indices] - time_values[enc_idx])
+            nearest_order = np.argsort(time_delta)
+            for candidate_rank in nearest_order:
+                opt_idx = int(opt_indices[candidate_rank])
+                if opt_idx in used_opt:
+                    continue
+                shift = time_values[opt_idx] - time_values[enc_idx]
+                if abs(shift) <= max_shift_s:
+                    matched.append((int(enc_idx), opt_idx, float(shift), sign_label))
+                    used_opt.add(opt_idx)
+                break
+
+    if not matched:
+        metrics = {
+            "matched_count": 0,
+            "max_abs_shift_ms": 0.0,
+            "p95_abs_shift_ms": 0.0,
+        }
+        return optical_deflection_deg.copy(), np.zeros_like(optical_deflection_deg), np.array([], dtype=int), metrics
+
+    correction_sum = np.zeros_like(time_values)
+    weight_sum = np.zeros_like(time_values)
+    for enc_idx, _, shift, _ in matched:
+        distance = np.abs(time_values - time_values[enc_idx])
+        in_window = distance < window_s
+        if not np.any(in_window):
+            continue
+        weight = 0.5 * (1.0 + np.cos(np.pi * distance[in_window] / window_s))
+        correction_sum[in_window] += shift * weight
+        weight_sum[in_window] += weight
+
+    correction = np.zeros_like(time_values)
+    active = weight_sum > 1e-12
+    correction[active] = correction_sum[active] / weight_sum[active]
+
+    applied_scale = 1.0
+    warped_time = time_values + correction
+    nonmonotonic_applied = False
+    if np.any(np.diff(warped_time) <= 0):
+        for scale in (0.5, 0.25, 0.125, 0.0625):
+            candidate_correction = correction * scale
+            candidate_warped_time = time_values + candidate_correction
+            if np.all(np.diff(candidate_warped_time) > 0):
+                correction = candidate_correction
+                warped_time = candidate_warped_time
+                applied_scale = scale
+                break
+
+    if np.any(np.diff(warped_time) <= 0):
+        nonmonotonic_applied = True
+
+    aligned = np.interp(warped_time, time_values, optical_deflection_deg)
+    shifts = np.asarray([item[2] for item in matched], dtype=float)
+    metrics = {
+        "matched_count": len(matched),
+        "max_abs_shift_ms": float(np.max(np.abs(shifts)) * 1e3),
+        "p95_abs_shift_ms": float(np.percentile(np.abs(shifts), 95) * 1e3),
+        "disabled_nonmonotonic": nonmonotonic_applied,
+        "applied_scale": float(applied_scale),
+    }
+    return aligned, correction, np.array([item[0] for item in matched], dtype=int), metrics
+
+def _plot_inverse_model_construction(inv_blue, inv_red, blue_camera_values, red_camera_values):
+    def _plot_model(ax, inverse_model, camera_values, title):
+        colors = {
+            "combined": "0.35",
+            "positive": "tab:orange",
+            "negative": "tab:purple",
+        }
+        combined = inverse_model["combined"]
+        combined_lookup = combined["lookup"]
+        combined_fit = combined["slope"] * combined_lookup[:, 0] + combined["intercept"]
+        combined_residual_deg = (combined_fit - combined_lookup[:, 1]) * 180 / np.pi
+        affine_rmse = float(np.sqrt(np.mean(combined_residual_deg ** 2)))
+        affine_p95 = float(np.percentile(np.abs(combined_residual_deg), 95))
+        affine_max = float(np.max(np.abs(combined_residual_deg)))
+        blended_vs_affine_p95 = float(np.percentile(np.abs(combined_residual_deg), 95))
+        test_min = float(np.min(camera_values))
+        test_max = float(np.max(camera_values))
+        lookup_min = float(combined_lookup[0, 0])
+        lookup_max = float(combined_lookup[-1, 0])
+        test_coverage = (
+            "inside"
+            if test_min >= lookup_min and test_max <= lookup_max
+            else "outside"
+        )
+        affine_branch_metrics = []
+        for key in ("positive", "negative"):
+            branch = inverse_model.get(key)
+            if branch is None:
+                continue
+            lookup = branch["lookup"]
+            branch_fit = combined["slope"] * lookup[:, 0] + combined["intercept"]
+            branch_residual_deg = (lookup[:, 1] - branch_fit) * 180 / np.pi
+            affine_branch_metrics.append(np.percentile(np.abs(branch_residual_deg), 95))
+
+        branch_gap_p95 = np.nan
+        positive = inverse_model.get("positive")
+        negative = inverse_model.get("negative")
+        if positive is not None and negative is not None:
+            common_min = max(positive["lookup"][0, 0], negative["lookup"][0, 0])
+            common_max = min(positive["lookup"][-1, 0], negative["lookup"][-1, 0])
+            if common_max > common_min:
+                common_x = np.linspace(common_min, common_max, 300)
+                positive_y = np.interp(common_x, positive["lookup"][:, 0], positive["lookup"][:, 1])
+                negative_y = np.interp(common_x, negative["lookup"][:, 0], negative["lookup"][:, 1])
+                branch_gap_p95 = float(np.percentile(np.abs(positive_y - negative_y) * 180 / np.pi, 95))
+
+        for key in ("combined", "positive", "negative"):
+            branch = inverse_model.get(key)
+            if branch is None:
+                continue
+            lookup = branch["lookup"]
+            ax.plot(
+                lookup[:, 0] * 180 / np.pi,
+                lookup[:, 1] * 180 / np.pi,
+                ".",
+                color=colors[key],
+                markersize=2,
+                alpha=0.45,
+                label="%s lookup" % key,
+            )
+            if key == "combined":
+                x_model = np.linspace(lookup[0, 0], lookup[-1, 0], 300)
+                y_blended = np.interp(x_model, lookup[:, 0], lookup[:, 1])
+                y_model = branch["slope"] * x_model + branch["intercept"]
+                ax.plot(
+                    x_model * 180 / np.pi,
+                    y_blended * 180 / np.pi,
+                    color="tab:green",
+                    linewidth=1.5,
+                    label="blended centerline",
+                )
+                ax.plot(
+                    x_model * 180 / np.pi,
+                    y_model * 180 / np.pi,
+                    "k-",
+                    linewidth=1.5,
+                    label="affine model used",
+                )
+
+        cam_min = np.min(camera_values) * 180 / np.pi
+        cam_max = np.max(camera_values) * 180 / np.pi
+        ax.axvspan(cam_min, cam_max, color="tab:blue", alpha=0.08, label="test range")
+        ax.set_title(title)
+        ax.set_xlabel("camera angle (deg)")
+        ax.set_ylabel("encoder-equivalent angle (deg)")
+        ax.legend(fontsize=8)
+        notes = [
+            "affine residual on combined lookup:",
+            "  RMSE %.4f deg" % affine_rmse,
+            "  p95 %.4f deg" % affine_p95,
+            "  max %.4f deg" % affine_max,
+            "blended-affine p95 %.4f deg" % blended_vs_affine_p95,
+            "branch-vs-affine p95 %.4f deg" % (
+                max(affine_branch_metrics) if affine_branch_metrics else np.nan
+            ),
+            "pos-neg branch gap p95 %.4f deg" % branch_gap_p95,
+            "test range: %s" % test_coverage,
+            "  %.2f..%.2f deg" % (cam_min, cam_max),
+            "lookup range:",
+            "  %.2f..%.2f deg" % (lookup_min * 180 / np.pi, lookup_max * 180 / np.pi),
+        ]
+        ax.text(
+            1.02,
+            0.98,
+            "\n".join(notes),
+            transform=ax.transAxes,
+            va="top",
+            ha="left",
+            fontsize=8,
+            bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.85, "edgecolor": "0.75"},
+        )
+
+    fig, axes = plt.subplots(1, 2, num=7, figsize=(15, 5), clear=True)
+    _plot_model(axes[0], inv_blue, blue_camera_values, "Blue inverse map construction")
+    _plot_model(axes[1], inv_red, red_camera_values, "Red inverse map construction")
+    fig.suptitle("Inverse Mapping: Discrete Calibration Points to Continuous Test Model")
+    fig.tight_layout(rect=(0, 0, 0.86, 0.95))
+
+def _print_peak_side_diagnostics(time_values, center_idx, label, signal_deg,
+        half_window_s=0.45):
+    time_values = np.asarray(time_values, dtype=float)
+    signal_deg = np.asarray(signal_deg, dtype=float)
+    window = np.abs(time_values - time_values[center_idx]) <= half_window_s
+    if np.count_nonzero(window) < 3:
+        print("%s peak-side diagnostic: not enough samples" % label)
+        return
+
+    local_time = time_values[window]
+    local_signal = signal_deg[window]
+    step = np.diff(local_signal)
+    dt = np.diff(local_time)
+    slope = step / (dt + 1e-12)
+    print(
+        "%s peak-side diagnostic: range=%.6f deg max_step=%.6f deg max_slope=%.6f deg/s median_step=%.6f deg"
+        % (
+            label,
+            np.max(local_signal) - np.min(local_signal),
+            np.max(np.abs(step)),
+            np.max(np.abs(slope)),
+            np.median(np.abs(step)),
+        )
+    )
 
 def _detect_signal_landmarks(signal, prominence_ratio=0.08, min_distance_ratio=0.08):
     signal = np.asarray(signal, dtype=float)
@@ -407,7 +810,7 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     # Calculate camera_angs 
     if not os.path.exists(test_folder + '/camera_enabled_angles.csv'):
 
-        blue_cam_angs, red_cam_angs, cam_time = test(file = test_folder + '/Stiffness_Measure_260625_215007.h264',
+        blue_cam_angs, red_cam_angs, cam_time = test(file = test_folder + '/Stiffness_Measure_260627_195643.h264',
                                                     inner_mask_loc = inner_mask,
                                                     outer_mask_loc = outer_mask,
                                                     pre_mask_save_loc = test_folder + '/camera_enabled_pre_mask.png',
@@ -445,8 +848,8 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
 
 
     # Read encoder_angs from SEA_Testbed_Plotter
-    stp = SEATestbedPlotter(test_folder + '/Stiffness_Measure_260625_215007.csv',
-                            test_folder + '/Stiffness_Measure_260625_215007.csv',
+    stp = SEATestbedPlotter(test_folder + '/Stiffness_Measure_260627_195643.csv',
+                            test_folder + '/Stiffness_Measure_260627_195643.csv',
                             # test_folder + '/camera_enabled_volts.csv'
                             )
     red_enc_angs = -(stp.theta_1 - stp.theta_1[0])
@@ -533,20 +936,46 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     plt.show()
 
 
-    # Second calibration, apply the direction-aware camera-to-encoder inverse map.
+    # Second calibration, apply the time-shift-corrected direction-aware camera-to-encoder inverse map.
     inv_blue = _load_directional_inverse_model(cal_folder + '/inv_blue_directional.npz')
     inv_red = _load_directional_inverse_model(cal_folder + '/inv_red_directional.npz')
+    svd_candidate_available = (
+        os.path.exists(cal_folder + '/svd_blue_cal.npz')
+        and os.path.exists(cal_folder + '/svd_red_cal.npz')
+    )
+    if svd_candidate_available:
+        svd_blue_cal = _load_svd_inverse_model(cal_folder + '/svd_blue_cal.npz')
+        svd_red_cal = _load_svd_inverse_model(cal_folder + '/svd_red_cal.npz')
+    else:
+        svd_blue_cal = None
+        svd_red_cal = None
+    unwrapped_blue_cam = np.unwrap(new_blue_cam_angs)
+    unwrapped_red_cam = np.unwrap(new_red_cam_angs)
 
     blue_cam_ang_cal = _apply_directional_inverse_lookup(
-        np.unwrap(new_blue_cam_angs),
+        unwrapped_blue_cam,
         aligned_cam_time,
         inv_blue,
     )
     red_cam_ang_cal = _apply_directional_inverse_lookup(
-        np.unwrap(new_red_cam_angs),
+        unwrapped_red_cam,
         aligned_cam_time,
         inv_red,
     )
+    if svd_candidate_available:
+        blue_cam_ang_cal_svd = _apply_svd_inverse_model(
+            unwrapped_blue_cam,
+            aligned_cam_time,
+            svd_blue_cal,
+        )
+        red_cam_ang_cal_svd = _apply_svd_inverse_model(
+            unwrapped_red_cam,
+            aligned_cam_time,
+            svd_red_cal,
+        )
+    else:
+        blue_cam_ang_cal_svd = np.full_like(unwrapped_blue_cam, np.nan)
+        red_cam_ang_cal_svd = np.full_like(unwrapped_red_cam, np.nan)
 
     valid_enc = (new_enc_time >= aligned_cam_time[0]) & (new_enc_time <= aligned_cam_time[-1])
     if np.count_nonzero(valid_enc) < 2:
@@ -560,12 +989,138 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
 
     red_cam_ang_cal_res = np.interp(plot_time, aligned_cam_time, red_cam_ang_cal)
     blue_cam_ang_cal_res = np.interp(plot_time, aligned_cam_time, blue_cam_ang_cal)
+    red_cam_ang_svd_res = np.interp(plot_time, aligned_cam_time, red_cam_ang_cal_svd)
+    blue_cam_ang_svd_res = np.interp(plot_time, aligned_cam_time, blue_cam_ang_cal_svd)
+    red_cam_raw_res = np.interp(plot_time, aligned_cam_time, unwrapped_red_cam)
+    blue_cam_raw_res = np.interp(plot_time, aligned_cam_time, unwrapped_blue_cam)
+    optical_defl_directional = (red_cam_ang_cal_res - blue_cam_ang_cal_res)*180/np.pi
+    optical_defl_svd = (red_cam_ang_svd_res - blue_cam_ang_svd_res)*180/np.pi
+    enc_defl = (red_enc_plot - blue_enc_plot)*180/np.pi
+    optical_defl_raw = (red_cam_raw_res - blue_cam_raw_res)*180/np.pi
+    red_cam_drift_res = red_cam_ang_cal_res - np.median(red_cam_ang_cal_res)
+    optical_residual = optical_defl_directional - enc_defl
+    svd_residual = optical_defl_svd - enc_defl
+    print(
+        "testbed time-shift corrected directional inverse residual: p95_abs %.6f deg, max_abs %.6f deg"
+        % (
+            np.percentile(np.abs(optical_residual), 95),
+            np.max(np.abs(optical_residual)),
+        )
+    )
+    if svd_candidate_available:
+        print(
+            "testbed SVD candidate residual: p95_abs %.6f deg, max_abs %.6f deg"
+            % (
+                np.nanpercentile(np.abs(svd_residual), 95),
+                np.nanmax(np.abs(svd_residual)),
+            )
+        )
+    else:
+        print("SVD candidate calibration files unavailable; skipping SVD comparison curve")
+    print(
+        "red optical motion relative to grounded encoder: p95_abs=%.6f deg, max_abs=%.6f deg"
+        % (
+            np.percentile(np.abs(red_cam_drift_res), 95) * 180 / np.pi,
+            np.max(np.abs(red_cam_drift_res)) * 180 / np.pi,
+        )
+    )
+    peak_idx = int(np.argmax(np.abs(enc_defl)))
+    _print_peak_side_diagnostics(
+        plot_time_rel,
+        peak_idx,
+        "red directional side",
+        red_cam_ang_cal_res * 180 / np.pi,
+    )
+    _print_peak_side_diagnostics(
+        plot_time_rel,
+        peak_idx,
+        "blue directional side",
+        blue_cam_ang_cal_res * 180 / np.pi,
+    )
+    _print_peak_side_diagnostics(
+        plot_time_rel,
+        peak_idx,
+        "time-shift corrected red-minus-blue",
+        optical_defl_directional,
+    )
+    if svd_candidate_available:
+        _print_peak_side_diagnostics(
+            plot_time_rel,
+            peak_idx,
+            "SVD candidate red-minus-blue",
+            optical_defl_svd,
+        )
+    _print_peak_side_diagnostics(
+        plot_time_rel,
+        peak_idx,
+        "raw red-minus-blue",
+        optical_defl_raw,
+    )
     
     plt.figure(3)
-    plt.plot(plot_time_rel,blue_cam_ang_cal_res*180/np.pi,'b')
-    plt.plot(plot_time_rel,red_cam_ang_cal_res*180/np.pi,'r')
-    plt.plot(plot_time_rel,blue_enc_plot*180/np.pi,'c')
-    plt.plot(plot_time_rel,red_enc_plot*180/np.pi,'m')
+    plt.plot(plot_time_rel, enc_defl, color='tab:blue')
+    plt.plot(plot_time_rel, optical_defl_directional, color='0.25')
+    figure3_legend = [
+        'Encoder deflection',
+        'Time-shift corrected directional optical deflection',
+    ]
+    if svd_candidate_available:
+        plt.plot(plot_time_rel, optical_defl_svd, color='tab:green')
+        figure3_legend.append('SVD-regularized optical candidate')
+    plt.legend(figure3_legend)
+    plt.title('Deflection Measurement Comparison')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Deflection (deg)')
+    plt.show()
+
+    side_zoom = np.abs(plot_time_rel - plot_time_rel[peak_idx]) <= 0.7
+    plt.figure(9)
+    plt.subplot(2, 1, 1)
+    plt.plot(plot_time_rel[side_zoom], red_cam_ang_cal_res[side_zoom] * 180 / np.pi, 'r')
+    plt.plot(plot_time_rel[side_zoom], blue_cam_ang_cal_res[side_zoom] * 180 / np.pi, 'b')
+    plt.plot(plot_time_rel[side_zoom], red_cam_raw_res[side_zoom] * 180 / np.pi, 'r--', alpha=0.45)
+    plt.plot(plot_time_rel[side_zoom], blue_cam_raw_res[side_zoom] * 180 / np.pi, 'b--', alpha=0.45)
+    plt.axvline(plot_time_rel[peak_idx], color='0.5', linewidth=1)
+    side_angle_legend = [
+        'Red time-shift corrected inverse',
+        'Blue time-shift corrected inverse',
+        'Red raw camera',
+        'Blue raw camera',
+    ]
+    plt.legend(side_angle_legend)
+    plt.ylabel('Side angle (deg)')
+    plt.title('Peak-Side Time-Shift Corrected Inverse Diagnostics')
+    plt.subplot(2, 1, 2)
+    plt.plot(plot_time_rel[side_zoom], enc_defl[side_zoom], color='tab:blue')
+    plt.plot(plot_time_rel[side_zoom], optical_defl_directional[side_zoom], color='0.25')
+    if svd_candidate_available:
+        plt.plot(plot_time_rel[side_zoom], optical_defl_svd[side_zoom], color='tab:green')
+    plt.plot(plot_time_rel[side_zoom], optical_defl_raw[side_zoom], color='tab:olive')
+    plt.axvline(plot_time_rel[peak_idx], color='0.5', linewidth=1)
+    side_zoom_legend = [
+        'Encoder deflection',
+        'Time-shift corrected red-minus-blue',
+    ]
+    if svd_candidate_available:
+        side_zoom_legend.append('SVD candidate red-minus-blue')
+    side_zoom_legend.append(
+        'Raw red-minus-blue',
+    )
+    plt.legend(side_zoom_legend)
+    plt.xlabel('Time (s)')
+    plt.ylabel('Deflection (deg)')
+    plt.show()
+
+    plt.figure(4)
+    plt.plot(plot_time_rel, optical_residual, color='0.25')
+    residual_legend = ['Time-shift corrected optical - encoder']
+    if svd_candidate_available:
+        plt.plot(plot_time_rel, svd_residual, color='tab:green')
+        residual_legend.append('SVD candidate optical - encoder')
+    plt.legend(residual_legend)
+    plt.title('Directional Optical Residual')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Deflection error (deg)')
     plt.show()
     
     # torque_cam_reg = torque[red_enc_pks[0]:red_enc_pks[-1]]
@@ -597,21 +1152,16 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
     plt.plot(aligned_cam_time_plot, new_blue_cam_angs*180/np.pi, 'b')
     plt.plot(new_enc_time_plot, new_blue_enc_angs*180/np.pi, 'c')
     plt.plot(new_enc_time_plot, new_red_enc_angs*180/np.pi, 'm')
-    plt.plot(aligned_cam_time_plot, red_cam_ang_cal*180/np.pi, 'g')
-    plt.plot(aligned_cam_time_plot, blue_cam_ang_cal*180/np.pi, 'k')
     plt.plot(new_enc_time_plot, -new_torque)
-    plt.legend(['Blue Cam','Red Cam','Blue Enc','Red Enc',
-                'Blue Cam Cal','Red Cam Cal',
+    plt.legend(['Red Cam','Blue Cam','Blue Enc','Red Enc',
                 'Torque Sensor'])
     plt.xlabel('Time (s)')
     plt.ylabel('Angle (deg)')
-    plt.title('Angle Calibration')
+    plt.title('Raw Camera and Encoder Signals')
 
-    # defl = -(blue_cam_ang_cal - red_cam_ang_cal)*180/np.pi
+    # defl = (red_cam_ang_cal - blue_cam_ang_cal)*180/np.pi
     # torque_res = np.interp(cam_time, trq_time, torque)
     
-    enc_defl = -(blue_enc_plot - red_enc_plot)*180/np.pi
-
     # defl_torque = np.vstack((defl,torque_res)).T
     # defl_torque = np.vstack((enc_defl,torque)).T
 
@@ -621,15 +1171,21 @@ def main(cal_folder,inner_mask,outer_mask,test_folder,defl_trq_file='/defl_torqu
 
     plt.figure(2)
     plt.plot(enc_defl, torque_plot)
-    plt.plot(-(blue_cam_ang_cal_res - red_cam_ang_cal_res)*180/np.pi, torque_plot)
-    # plt.plot(defl,torque_res)
-    plt.legend(['Motor Encoder Measurement','Optical Measurement'])
+    plt.plot(optical_defl_directional, torque_plot)
+    torque_legend = [
+        'Motor Encoder Measurement',
+        'Optical Time-Shift Corrected Directional Inverse',
+    ]
+    if svd_candidate_available:
+        plt.plot(optical_defl_svd, torque_plot)
+        torque_legend.append('Optical SVD-Regularized Candidate')
+    plt.legend(torque_legend)
     plt.xlabel('Deflection (deg)')
     plt.ylabel('Torque (Nm)')
 
     with open(test_folder + defl_trq_file, 'w') as f:
         np.savetxt(f, np.vstack(
-            (-(blue_cam_ang_cal_res - red_cam_ang_cal_res)*180/np.pi, torque_plot)
+            (optical_defl_directional, torque_plot)
             ).T, fmt='%.7f', delimiter=", ")
 
 
@@ -663,8 +1219,8 @@ if __name__ == '__main__':
     #         defl_trq_file='S1_14_19.csv')    
 
     main(cal_folder='./cal_folder',
-            inner_mask = 'mask_inner_0618.png',
-            outer_mask = 'mask_outer_0618.png',
+            inner_mask = 'mask_inner_0627.png',
+            outer_mask = 'mask_outer_0627.png',
             test_folder='./meas_folder',
         )
     plt.show()

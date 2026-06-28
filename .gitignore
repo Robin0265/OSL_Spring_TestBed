@@ -23,3 +23,8 @@ test.py# pixi environments
 !.pixi/config.toml
 
 *.npz
+
+cal_folder/*
+meas_folder/*
+
+.vscode/*

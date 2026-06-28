@@ -5,6 +5,7 @@ import scipy.io
 from Vision.plot_cal import circle_find_3_points
 from Vision.video_reading_test import test, CircleAnnotator, CircleTracker
 import os.path
+import json
 from scipy.signal import find_peaks
 from scipy.stats import linregress
 from scipy.optimize import minimize
@@ -464,7 +465,7 @@ def _wrap_to_pi(values):
     return (np.asarray(values, dtype=float) + np.pi) % (2 * np.pi) - np.pi
 
 def _prepare_inverse_lookup(camera_values, encoder_values, max_bins=720,
-        min_bin_count=3):
+        min_bin_count=3, smooth_centerline=False):
     camera_values = np.asarray(camera_values, dtype=float)
     encoder_values = np.asarray(encoder_values, dtype=float)
 
@@ -511,6 +512,19 @@ def _prepare_inverse_lookup(camera_values, encoder_values, max_bins=720,
         unique_camera.append(camera_value)
         unique_encoder.append(encoder_value)
 
+    unique_camera = np.asarray(unique_camera, dtype=float)
+    unique_encoder = np.asarray(unique_encoder, dtype=float)
+    if smooth_centerline and unique_encoder.size >= 5:
+        smooth_window = min(11, unique_encoder.size)
+        if smooth_window % 2 == 0:
+            smooth_window -= 1
+        unique_encoder = _smooth_signal(unique_encoder, window=smooth_window)
+
+        if slope >= 0:
+            unique_encoder = np.maximum.accumulate(unique_encoder)
+        else:
+            unique_encoder = np.minimum.accumulate(unique_encoder)
+
     lookup = np.column_stack((unique_camera, unique_encoder))
     return {
         "lookup": lookup,
@@ -548,6 +562,72 @@ def _smooth_signal(values, window=11):
     padded = np.pad(values, (pad, pad), mode="edge")
     return np.convolve(padded, kernel, mode="valid")
 
+def _regularize_inverse_branch(inverse_model, smooth_window=5):
+    if inverse_model is None:
+        return None
+
+    lookup = inverse_model["lookup"].copy()
+    if lookup.shape[0] < 5:
+        return inverse_model
+
+    window = min(smooth_window, lookup.shape[0])
+    if window % 2 == 0:
+        window -= 1
+    if window >= 3:
+        lookup[:, 1] = _smooth_signal(lookup[:, 1], window=window)
+
+    if inverse_model["slope"] >= 0:
+        lookup[:, 1] = np.maximum.accumulate(lookup[:, 1])
+    else:
+        lookup[:, 1] = np.minimum.accumulate(lookup[:, 1])
+
+    regularized = inverse_model.copy()
+    regularized["lookup"] = lookup
+    return regularized
+
+def _anchor_directional_extrema(inverse_model, edge_fraction=0.04):
+    positive = inverse_model.get("positive")
+    negative = inverse_model.get("negative")
+    if positive is None or negative is None:
+        return inverse_model
+
+    pos_lookup = positive["lookup"]
+    neg_lookup = negative["lookup"]
+    common_min = max(pos_lookup[0, 0], neg_lookup[0, 0])
+    common_max = min(pos_lookup[-1, 0], neg_lookup[-1, 0])
+    if not common_max > common_min:
+        return inverse_model
+
+    span = common_max - common_min
+    edge_width = max(span * edge_fraction, 1e-9)
+    low_anchor = 0.5 * (
+        _apply_inverse_lookup(np.asarray([common_min]), positive)[0]
+        + _apply_inverse_lookup(np.asarray([common_min]), negative)[0]
+    )
+    high_anchor = 0.5 * (
+        _apply_inverse_lookup(np.asarray([common_max]), positive)[0]
+        + _apply_inverse_lookup(np.asarray([common_max]), negative)[0]
+    )
+
+    anchored = inverse_model.copy()
+    for key, anchor_model in (("positive", positive), ("negative", negative)):
+        branch = anchor_model.copy()
+        lookup = branch["lookup"].copy()
+        x = lookup[:, 0]
+        low_current = _apply_inverse_lookup(np.asarray([common_min]), branch)[0]
+        high_current = _apply_inverse_lookup(np.asarray([common_max]), branch)[0]
+        low_weight = np.clip((common_min + edge_width - x) / edge_width, 0.0, 1.0)
+        high_weight = np.clip((x - (common_max - edge_width)) / edge_width, 0.0, 1.0)
+        lookup[:, 1] = (
+            lookup[:, 1]
+            + (low_anchor - low_current) * low_weight
+            + (high_anchor - high_current) * high_weight
+        )
+        branch["lookup"] = lookup
+        anchored[key] = _regularize_inverse_branch(branch, smooth_window=3)
+
+    return anchored
+
 def _fill_zero_direction(direction):
     direction = np.asarray(direction, dtype=float).copy()
     nonzero = np.flatnonzero(direction != 0)
@@ -583,6 +663,49 @@ def _motion_direction(values, time_values, deadband_ratio=0.04):
     direction[velocity < -threshold] = -1.0
     return _fill_zero_direction(direction)
 
+def _direction_blend_weight(values, time_values, direction_values=None,
+        deadband_ratio=0.08):
+    values = np.asarray(values, dtype=float)
+    time_values = np.asarray(time_values, dtype=float)
+    if values.size == 0:
+        return np.asarray([], dtype=float)
+
+    if direction_values is not None:
+        direction = _fill_zero_direction(np.sign(np.asarray(direction_values, dtype=float)))
+        weight = 0.5 * (direction + 1.0)
+        return np.clip(_smooth_signal(weight, window=15), 0.0, 1.0)
+
+    if values.size < 2:
+        return np.ones_like(values, dtype=float)
+
+    velocity = np.gradient(values, time_values)
+    velocity = _smooth_signal(velocity, window=15)
+    finite_speed = np.abs(velocity[np.isfinite(velocity)])
+    if finite_speed.size == 0:
+        return np.ones_like(values, dtype=float)
+
+    transition_speed = max(np.percentile(finite_speed, 70) * deadband_ratio, 1e-8)
+    weight = 0.5 * (1.0 + np.tanh(velocity / transition_speed))
+    return np.clip(weight, 0.0, 1.0)
+
+def _direction_confidence_weight(values, time_values, direction_values=None,
+        deadband_ratio=0.08):
+    values = np.asarray(values, dtype=float)
+    time_values = np.asarray(time_values, dtype=float)
+    if direction_values is not None:
+        return np.ones_like(values, dtype=float)
+    if values.size < 2:
+        return np.ones_like(values, dtype=float)
+
+    velocity = np.gradient(values, time_values)
+    velocity = _smooth_signal(velocity, window=15)
+    finite_speed = np.abs(velocity[np.isfinite(velocity)])
+    if finite_speed.size == 0:
+        return np.ones_like(values, dtype=float)
+
+    transition_speed = max(np.percentile(finite_speed, 70) * deadband_ratio, 1e-8)
+    return np.clip(np.tanh(np.abs(velocity) / transition_speed), 0.0, 1.0)
+
 def _prepare_directional_inverse_lookup(camera_values, encoder_values, time_values,
         direction_values=None, min_branch_samples=80):
     camera_values = np.asarray(camera_values, dtype=float)
@@ -594,7 +717,12 @@ def _prepare_directional_inverse_lookup(camera_values, encoder_values, time_valu
         direction_values = np.asarray(direction_values, dtype=float)
 
     model = {
-        "combined": _prepare_inverse_lookup(camera_values, encoder_values),
+        "combined": _prepare_inverse_lookup(
+            camera_values,
+            encoder_values,
+            min_bin_count=5,
+            smooth_centerline=True,
+        ),
         "positive": None,
         "negative": None,
         "min_branch_samples": min_branch_samples,
@@ -611,20 +739,46 @@ def _apply_directional_inverse_lookup(camera_values, time_values, inverse_model,
         direction_values=None):
     camera_values = np.asarray(camera_values, dtype=float)
     time_values = np.asarray(time_values, dtype=float)
-    if direction_values is None:
-        direction_values = _motion_direction(camera_values, time_values)
-    else:
-        direction_values = _fill_zero_direction(np.sign(np.asarray(direction_values, dtype=float)))
+    positive_model = inverse_model.get("positive")
+    negative_model = inverse_model.get("negative")
+    if positive_model is None or negative_model is None:
+        calibrated = _apply_inverse_lookup(camera_values, inverse_model["combined"])
+        for label, key in ((1.0, "positive"), (-1.0, "negative")):
+            branch_model = inverse_model.get(key)
+            if branch_model is None:
+                continue
+            direction = _motion_direction(camera_values, time_values)
+            branch = direction == label
+            if np.any(branch):
+                calibrated[branch] = _apply_inverse_lookup(camera_values[branch], branch_model)
+        return calibrated
 
-    calibrated = _apply_inverse_lookup(camera_values, inverse_model["combined"])
-    for label, key in ((1.0, "positive"), (-1.0, "negative")):
-        branch_model = inverse_model.get(key)
-        if branch_model is None:
-            continue
-        branch = direction_values == label
-        if np.any(branch):
-            calibrated[branch] = _apply_inverse_lookup(camera_values[branch], branch_model)
-    return calibrated
+    positive_calibrated = _apply_inverse_lookup(camera_values, positive_model)
+    negative_calibrated = _apply_inverse_lookup(camera_values, negative_model)
+    combined_calibrated = _apply_inverse_lookup(camera_values, inverse_model["combined"])
+    positive_weight = _direction_blend_weight(
+        camera_values,
+        time_values,
+        direction_values=direction_values,
+    )
+    directional_calibrated = (
+        positive_weight * positive_calibrated
+        + (1.0 - positive_weight) * negative_calibrated
+    )
+    direction_confidence = _direction_confidence_weight(
+        camera_values,
+        time_values,
+        direction_values=direction_values,
+    )
+    branch_gap = np.abs(positive_calibrated - negative_calibrated)
+    gap_start = np.deg2rad(0.12)
+    gap_end = np.deg2rad(0.30)
+    gap_weight = np.clip((branch_gap - gap_start) / (gap_end - gap_start), 0.0, 1.0)
+    combined_weight = (1.0 - direction_confidence) * gap_weight
+    return (
+        (1.0 - combined_weight) * directional_calibrated
+        + combined_weight * combined_calibrated
+    )
 
 def _directional_inverse_rows(inverse_model):
     rows = []
@@ -674,6 +828,180 @@ def _load_directional_inverse_model(path):
         }
     return model
 
+def _fit_smooth_camera_calibration(camera_values, encoder_values, degree=3):
+    centerline = _prepare_inverse_lookup(
+        camera_values,
+        encoder_values,
+        min_bin_count=5,
+        smooth_centerline=True,
+    )
+    lookup = centerline["lookup"]
+    fit_degree = min(degree, max(1, lookup.shape[0] - 1))
+    bias_coefficients = np.polyfit(
+        lookup[:, 0],
+        lookup[:, 1] - lookup[:, 0],
+        fit_degree,
+    )
+    slope, intercept, r_value, _, _ = linregress(camera_values, encoder_values)
+    return {
+        "bias_coefficients": bias_coefficients,
+        "degree": fit_degree,
+        "affine_slope_diagnostic": slope,
+        "affine_intercept_diagnostic": intercept,
+        "affine_r_diagnostic": r_value,
+    }
+
+def _apply_smooth_camera_calibration(camera_values, calibration_model):
+    camera_values = np.asarray(camera_values, dtype=float)
+    bias = np.polyval(calibration_model["bias_coefficients"], camera_values)
+    return camera_values + bias
+
+def _save_smooth_camera_calibration(path, calibration_model):
+    np.savez(
+        path,
+        bias_coefficients=calibration_model["bias_coefficients"],
+        degree=np.asarray(calibration_model["degree"]),
+        affine_slope_diagnostic=np.asarray(calibration_model["affine_slope_diagnostic"]),
+        affine_intercept_diagnostic=np.asarray(calibration_model["affine_intercept_diagnostic"]),
+        affine_r_diagnostic=np.asarray(calibration_model["affine_r_diagnostic"]),
+    )
+
+def _load_smooth_camera_calibration(path):
+    data = np.load(path)
+    return {
+        "bias_coefficients": np.asarray(data["bias_coefficients"], dtype=float),
+        "degree": int(data["degree"]),
+        "affine_slope_diagnostic": float(data["affine_slope_diagnostic"]),
+        "affine_intercept_diagnostic": float(data["affine_intercept_diagnostic"]),
+        "affine_r_diagnostic": float(data["affine_r_diagnostic"]),
+    }
+
+def _svd_basis(camera_values, direction_values, degree, center, scale):
+    camera_values = np.asarray(camera_values, dtype=float)
+    direction_values = _fill_zero_direction(
+        np.sign(np.asarray(direction_values, dtype=float))
+    )
+    x = (camera_values - center) / (scale + 1e-12)
+    columns = [np.ones_like(x)]
+    for order in range(1, degree + 1):
+        columns.append(x ** order)
+    columns.append(direction_values)
+    for order in range(1, degree + 1):
+        columns.append(direction_values * (x ** order))
+    return np.column_stack(columns)
+
+def _fit_svd_inverse_model(camera_values, encoder_values, time_values,
+        direction_values=None, degree=9, ridge=1e-8):
+    camera_values = np.asarray(camera_values, dtype=float)
+    encoder_values = np.asarray(encoder_values, dtype=float)
+    time_values = np.asarray(time_values, dtype=float)
+    if direction_values is None:
+        direction_values = _motion_direction(encoder_values, time_values)
+    else:
+        direction_values = _fill_zero_direction(np.sign(np.asarray(direction_values, dtype=float)))
+
+    valid = (
+        np.isfinite(camera_values)
+        & np.isfinite(encoder_values)
+        & np.isfinite(direction_values)
+    )
+    camera_values = camera_values[valid]
+    encoder_values = encoder_values[valid]
+    direction_values = direction_values[valid]
+    if camera_values.size < 2 * degree + 4:
+        raise ValueError("Not enough valid samples for SVD inverse model.")
+
+    center = float(np.median(camera_values))
+    scale = float(np.percentile(np.abs(camera_values - center), 95))
+    if scale <= 1e-12:
+        scale = float(np.std(camera_values))
+    if scale <= 1e-12:
+        scale = 1.0
+
+    basis = _svd_basis(camera_values, direction_values, degree, center, scale)
+    output_center = float(np.median(encoder_values))
+    target = encoder_values - output_center
+    u, singular_values, vt = np.linalg.svd(basis, full_matrices=False)
+    inv_s = singular_values / (singular_values ** 2 + ridge)
+    coefficients = vt.T @ (inv_s * (u.T @ target))
+    fitted = basis @ coefficients + output_center
+    residual_deg = (fitted - encoder_values) * 180 / np.pi
+
+    holdout = np.arange(camera_values.size) % 5 == 0
+    if np.count_nonzero(~holdout) > 2 * degree + 4 and np.count_nonzero(holdout) > 10:
+        train_basis = basis[~holdout]
+        train_target = target[~holdout]
+        train_u, train_s, train_vt = np.linalg.svd(train_basis, full_matrices=False)
+        train_inv_s = train_s / (train_s ** 2 + ridge)
+        train_coefficients = train_vt.T @ (train_inv_s * (train_u.T @ train_target))
+        validation = basis[holdout] @ train_coefficients + output_center
+        validation_residual_deg = (validation - encoder_values[holdout]) * 180 / np.pi
+    else:
+        validation_residual_deg = residual_deg
+
+    return {
+        "degree": int(degree),
+        "ridge": float(ridge),
+        "center": center,
+        "scale": scale,
+        "output_center": output_center,
+        "coefficients": coefficients,
+        "singular_values": singular_values,
+        "fit_p95_abs_deg": float(np.percentile(np.abs(residual_deg), 95)),
+        "fit_max_abs_deg": float(np.max(np.abs(residual_deg))),
+        "validation_p95_abs_deg": float(np.percentile(np.abs(validation_residual_deg), 95)),
+        "validation_max_abs_deg": float(np.max(np.abs(validation_residual_deg))),
+    }
+
+def _apply_svd_inverse_model(camera_values, time_values, svd_model,
+        direction_values=None):
+    camera_values = np.asarray(camera_values, dtype=float)
+    time_values = np.asarray(time_values, dtype=float)
+    if direction_values is None:
+        direction_values = _motion_direction(camera_values, time_values)
+    else:
+        direction_values = _fill_zero_direction(np.sign(np.asarray(direction_values, dtype=float)))
+    basis = _svd_basis(
+        camera_values,
+        direction_values,
+        svd_model["degree"],
+        svd_model["center"],
+        svd_model["scale"],
+    )
+    return basis @ svd_model["coefficients"] + svd_model["output_center"]
+
+def _save_svd_inverse_model(path, svd_model):
+    np.savez(
+        path,
+        degree=np.asarray(svd_model["degree"]),
+        ridge=np.asarray(svd_model["ridge"]),
+        center=np.asarray(svd_model["center"]),
+        scale=np.asarray(svd_model["scale"]),
+        output_center=np.asarray(svd_model["output_center"]),
+        coefficients=np.asarray(svd_model["coefficients"], dtype=float),
+        singular_values=np.asarray(svd_model["singular_values"], dtype=float),
+        fit_p95_abs_deg=np.asarray(svd_model["fit_p95_abs_deg"]),
+        fit_max_abs_deg=np.asarray(svd_model["fit_max_abs_deg"]),
+        validation_p95_abs_deg=np.asarray(svd_model["validation_p95_abs_deg"]),
+        validation_max_abs_deg=np.asarray(svd_model["validation_max_abs_deg"]),
+    )
+
+def _load_svd_inverse_model(path):
+    data = np.load(path)
+    return {
+        "degree": int(data["degree"]),
+        "ridge": float(data["ridge"]),
+        "center": float(data["center"]),
+        "scale": float(data["scale"]),
+        "output_center": float(data["output_center"]),
+        "coefficients": np.asarray(data["coefficients"], dtype=float),
+        "singular_values": np.asarray(data["singular_values"], dtype=float),
+        "fit_p95_abs_deg": float(data["fit_p95_abs_deg"]),
+        "fit_max_abs_deg": float(data["fit_max_abs_deg"]),
+        "validation_p95_abs_deg": float(data["validation_p95_abs_deg"]),
+        "validation_max_abs_deg": float(data["validation_max_abs_deg"]),
+    }
+
 def _print_residual_stats(label, residual, mask=None):
     residual = np.asarray(residual, dtype=float)
     if mask is not None:
@@ -695,6 +1023,386 @@ def _print_residual_stats(label, residual, mask=None):
             np.sqrt(np.mean(residual ** 2)),
         )
     )
+
+def _plot_branch_separation_diagnostic(ax, channel_name, camera_values,
+        encoder_values, direction_values, inverse_model, focus_deg=20.0):
+    camera_values = np.asarray(camera_values, dtype=float)
+    encoder_values = np.asarray(encoder_values, dtype=float)
+    direction_values = np.asarray(direction_values, dtype=float)
+    valid = (
+        np.isfinite(camera_values)
+        & np.isfinite(encoder_values)
+        & np.isfinite(direction_values)
+    )
+    camera_values = camera_values[valid]
+    encoder_values = encoder_values[valid]
+    direction_values = direction_values[valid]
+
+    focus = np.deg2rad(focus_deg)
+    focus_mask = np.abs(camera_values) <= focus
+    positive_mask = focus_mask & (direction_values > 0)
+    negative_mask = focus_mask & (direction_values < 0)
+
+    ax.plot(
+        camera_values[positive_mask] * 180 / np.pi,
+        encoder_values[positive_mask] * 180 / np.pi,
+        ".",
+        color="tab:orange",
+        alpha=0.22,
+        markersize=2,
+        label="forward samples",
+    )
+    ax.plot(
+        camera_values[negative_mask] * 180 / np.pi,
+        encoder_values[negative_mask] * 180 / np.pi,
+        ".",
+        color="tab:blue",
+        alpha=0.22,
+        markersize=2,
+        label="reverse samples",
+    )
+
+    x_min = -focus
+    x_max = focus
+    plotted_branch = False
+    for key, color, label in (
+            ("combined", "0.2", "combined lookup"),
+            ("positive", "tab:red", "forward lookup"),
+            ("negative", "tab:cyan", "reverse lookup")):
+        branch_model = inverse_model.get(key)
+        if branch_model is None:
+            continue
+        lookup = branch_model["lookup"]
+        branch_x_min = max(x_min, lookup[0, 0])
+        branch_x_max = min(x_max, lookup[-1, 0])
+        if branch_x_max <= branch_x_min:
+            continue
+        x_model = np.linspace(branch_x_min, branch_x_max, 400)
+        y_model = _apply_inverse_lookup(x_model, branch_model)
+        ax.plot(
+            x_model * 180 / np.pi,
+            y_model * 180 / np.pi,
+            color=color,
+            linewidth=1.4,
+            label=label,
+        )
+        plotted_branch = True
+
+    pos_model = inverse_model.get("positive")
+    neg_model = inverse_model.get("negative")
+    gap_summary = "branch gap unavailable"
+    if pos_model is not None and neg_model is not None:
+        gap_x_min = max(x_min, pos_model["lookup"][0, 0], neg_model["lookup"][0, 0])
+        gap_x_max = min(x_max, pos_model["lookup"][-1, 0], neg_model["lookup"][-1, 0])
+        if gap_x_max > gap_x_min:
+            x_gap = np.linspace(gap_x_min, gap_x_max, 500)
+            branch_gap = (
+                _apply_inverse_lookup(x_gap, pos_model)
+                - _apply_inverse_lookup(x_gap, neg_model)
+            ) * 180 / np.pi
+            gap_abs = np.abs(branch_gap)
+            max_idx = int(np.argmax(gap_abs))
+            gap_summary = (
+                "lookup gap p50=%.4f deg p95=%.4f deg max=%.4f deg at x=%.2f deg"
+                % (
+                    np.percentile(gap_abs, 50),
+                    np.percentile(gap_abs, 95),
+                    np.max(gap_abs),
+                    x_gap[max_idx] * 180 / np.pi,
+                )
+            )
+            ax.text(
+                0.02,
+                0.98,
+                gap_summary,
+                transform=ax.transAxes,
+                va="top",
+                ha="left",
+                fontsize=8,
+                bbox={
+                    "boxstyle": "round",
+                    "facecolor": "white",
+                    "alpha": 0.85,
+                    "edgecolor": "0.75",
+                },
+            )
+
+    bin_edges = np.linspace(-focus, focus, 41)
+    sample_gaps = []
+    sample_centers = []
+    for low, high in zip(bin_edges[:-1], bin_edges[1:]):
+        in_bin = (camera_values >= low) & (camera_values < high)
+        pos_bin = in_bin & (direction_values > 0)
+        neg_bin = in_bin & (direction_values < 0)
+        if np.count_nonzero(pos_bin) < 5 or np.count_nonzero(neg_bin) < 5:
+            continue
+        sample_gaps.append(
+            (
+                np.median(encoder_values[pos_bin])
+                - np.median(encoder_values[neg_bin])
+            ) * 180 / np.pi
+        )
+        sample_centers.append(0.5 * (low + high) * 180 / np.pi)
+
+    if sample_gaps:
+        sample_gaps = np.asarray(sample_gaps, dtype=float)
+        sample_centers = np.asarray(sample_centers, dtype=float)
+        max_sample_idx = int(np.argmax(np.abs(sample_gaps)))
+        print(
+            "%s low-angle sample branch separation: bins=%d p50_abs=%.6f deg p95_abs=%.6f deg max_abs=%.6f deg at x=%.2f deg"
+            % (
+                channel_name,
+                len(sample_gaps),
+                np.percentile(np.abs(sample_gaps), 50),
+                np.percentile(np.abs(sample_gaps), 95),
+                np.max(np.abs(sample_gaps)),
+                sample_centers[max_sample_idx],
+            )
+        )
+    else:
+        print("%s low-angle sample branch separation: insufficient overlapping bins" % channel_name)
+    print("%s low-angle %s" % (channel_name, gap_summary))
+
+    ax.set_title("%s calibration branch separation" % channel_name.capitalize())
+    ax.set_xlabel("Raw camera angle (deg)")
+    ax.set_ylabel("Encoder angle (deg)")
+    ax.grid(True, alpha=0.25)
+    if plotted_branch:
+        ax.legend(fontsize=8)
+
+def _branch_gap_metrics(camera_values, encoder_values, direction_values,
+        focus_deg=20.0, min_bin_count=5):
+    camera_values = np.asarray(camera_values, dtype=float)
+    encoder_values = np.asarray(encoder_values, dtype=float)
+    direction_values = np.asarray(direction_values, dtype=float)
+    valid = (
+        np.isfinite(camera_values)
+        & np.isfinite(encoder_values)
+        & np.isfinite(direction_values)
+    )
+    camera_values = camera_values[valid]
+    encoder_values = encoder_values[valid]
+    direction_values = direction_values[valid]
+
+    focus = np.deg2rad(focus_deg)
+    bin_edges = np.linspace(-focus, focus, 41)
+    sample_gaps = []
+    for low, high in zip(bin_edges[:-1], bin_edges[1:]):
+        in_bin = (camera_values >= low) & (camera_values < high)
+        pos_bin = in_bin & (direction_values > 0)
+        neg_bin = in_bin & (direction_values < 0)
+        if np.count_nonzero(pos_bin) < min_bin_count or np.count_nonzero(neg_bin) < min_bin_count:
+            continue
+        sample_gaps.append(
+            (
+                np.median(encoder_values[pos_bin])
+                - np.median(encoder_values[neg_bin])
+            ) * 180 / np.pi
+        )
+
+    sample_gaps = np.asarray(sample_gaps, dtype=float)
+    metrics = {
+        "sample_bins": sample_gaps.size,
+        "sample_p50_abs": np.nan,
+        "sample_p95_abs": np.nan,
+        "sample_max_abs": np.nan,
+        "lookup_p50_abs": np.nan,
+        "lookup_p95_abs": np.nan,
+        "lookup_max_abs": np.nan,
+    }
+    if sample_gaps.size:
+        metrics["sample_p50_abs"] = float(np.percentile(np.abs(sample_gaps), 50))
+        metrics["sample_p95_abs"] = float(np.percentile(np.abs(sample_gaps), 95))
+        metrics["sample_max_abs"] = float(np.max(np.abs(sample_gaps)))
+
+    try:
+        inverse_model = _prepare_directional_inverse_lookup(
+            camera_values,
+            encoder_values,
+            np.arange(camera_values.size, dtype=float),
+            direction_values=direction_values,
+        )
+    except ValueError:
+        return metrics
+
+    pos_model = inverse_model.get("positive")
+    neg_model = inverse_model.get("negative")
+    if pos_model is None or neg_model is None:
+        return metrics
+
+    gap_x_min = max(-focus, pos_model["lookup"][0, 0], neg_model["lookup"][0, 0])
+    gap_x_max = min(focus, pos_model["lookup"][-1, 0], neg_model["lookup"][-1, 0])
+    if gap_x_max <= gap_x_min:
+        return metrics
+
+    x_gap = np.linspace(gap_x_min, gap_x_max, 500)
+    branch_gap = (
+        _apply_inverse_lookup(x_gap, pos_model)
+        - _apply_inverse_lookup(x_gap, neg_model)
+    ) * 180 / np.pi
+    gap_abs = np.abs(branch_gap)
+    metrics["lookup_p50_abs"] = float(np.percentile(gap_abs, 50))
+    metrics["lookup_p95_abs"] = float(np.percentile(gap_abs, 95))
+    metrics["lookup_max_abs"] = float(np.max(gap_abs))
+    return metrics
+
+def _sweep_camera_time_shift_branch_gap(channel_name, camera_time, camera_values,
+        encoder_time, encoder_values, focus_deg=20.0, sweep_frames=2.0,
+        frame_rate=30.0, n_steps=41):
+    camera_time = np.asarray(camera_time, dtype=float)
+    camera_values = np.asarray(camera_values, dtype=float)
+    encoder_time = np.asarray(encoder_time, dtype=float)
+    encoder_values = np.asarray(encoder_values, dtype=float)
+
+    max_shift = sweep_frames / frame_rate
+    shifts = np.linspace(-max_shift, max_shift, n_steps)
+    rows = []
+    for shift in shifts:
+        shifted_camera_time = camera_time + shift
+        valid = (
+            (encoder_time >= shifted_camera_time[0])
+            & (encoder_time <= shifted_camera_time[-1])
+        )
+        if np.count_nonzero(valid) < 20:
+            metrics = _branch_gap_metrics([], [], [], focus_deg=focus_deg)
+        else:
+            inverse_time = encoder_time[valid]
+            encoder_rng = encoder_values[valid]
+            camera_rng = np.interp(inverse_time, shifted_camera_time, camera_values)
+            direction = _motion_direction(encoder_rng, inverse_time)
+            metrics = _branch_gap_metrics(
+                camera_rng,
+                encoder_rng,
+                direction,
+                focus_deg=focus_deg,
+            )
+        row = {"shift_s": float(shift), "shift_frames": float(shift * frame_rate)}
+        row.update(metrics)
+        rows.append(row)
+
+    finite_rows = [
+        row for row in rows
+        if np.isfinite(row["lookup_p95_abs"])
+    ]
+    if finite_rows:
+        best = min(finite_rows, key=lambda row: row["lookup_p95_abs"])
+    else:
+        best = min(rows, key=lambda row: np.inf if not np.isfinite(row["sample_p95_abs"]) else row["sample_p95_abs"])
+
+    print(
+        "%s branch-gap time-shift sweep (focus +/-%.1f deg): best shift %.3f frames / %.2f ms, sample p95 %.6f deg, lookup p95 %.6f deg, lookup max %.6f deg"
+        % (
+            channel_name,
+            focus_deg,
+            best["shift_frames"],
+            best["shift_s"] * 1e3,
+            best["sample_p95_abs"],
+            best["lookup_p95_abs"],
+            best["lookup_max_abs"],
+        )
+    )
+    zero_row = min(rows, key=lambda row: abs(row["shift_s"]))
+    print(
+        "%s branch-gap no-shift reference: sample p95 %.6f deg, lookup p95 %.6f deg, lookup max %.6f deg"
+        % (
+            channel_name,
+            zero_row["sample_p95_abs"],
+            zero_row["lookup_p95_abs"],
+            zero_row["lookup_max_abs"],
+        )
+    )
+    return rows
+
+def _best_shift_from_branch_gap_sweep(rows):
+    finite_lookup_rows = [
+        row for row in rows
+        if np.isfinite(row["lookup_p95_abs"])
+    ]
+    if finite_lookup_rows:
+        return min(finite_lookup_rows, key=lambda row: row["lookup_p95_abs"])
+
+    finite_sample_rows = [
+        row for row in rows
+        if np.isfinite(row["sample_p95_abs"])
+    ]
+    if finite_sample_rows:
+        return min(finite_sample_rows, key=lambda row: row["sample_p95_abs"])
+
+    return min(rows, key=lambda row: abs(row["shift_s"]))
+
+def _branch_gap_score(row):
+    if np.isfinite(row["lookup_p95_abs"]):
+        return float(row["lookup_p95_abs"])
+    if np.isfinite(row["sample_p95_abs"]):
+        return float(row["sample_p95_abs"])
+    return np.inf
+
+def _shift_row_metadata(row):
+    return {
+        "shift_s": float(row["shift_s"]),
+        "shift_frames": float(row["shift_frames"]),
+        "sample_bins": int(row.get("sample_bins", 0)),
+        "sample_p50_abs_deg": float(row.get("sample_p50_abs", np.nan)),
+        "sample_p95_abs_deg": float(row.get("sample_p95_abs", np.nan)),
+        "sample_max_abs_deg": float(row.get("sample_max_abs", np.nan)),
+        "lookup_p50_abs_deg": float(row.get("lookup_p50_abs", np.nan)),
+        "lookup_p95_abs_deg": float(row.get("lookup_p95_abs", np.nan)),
+        "lookup_max_abs_deg": float(row.get("lookup_max_abs", np.nan)),
+        "score_deg": float(_branch_gap_score(row)),
+    }
+
+def _select_accepted_time_shift(channel_name, rows, max_abs_shift_frames=1.0,
+        min_improvement_ratio=0.6, min_abs_improvement_deg=0.05,
+        min_sample_bins=15):
+    rows = list(rows)
+    zero_row = min(rows, key=lambda row: abs(row["shift_s"]))
+    best_row = _best_shift_from_branch_gap_sweep(rows)
+    zero_score = _branch_gap_score(zero_row)
+    best_score = _branch_gap_score(best_row)
+    sweep_min = min(row["shift_frames"] for row in rows)
+    sweep_max = max(row["shift_frames"] for row in rows)
+    reasons = []
+
+    if not np.isfinite(best_score) or not np.isfinite(zero_score):
+        reasons.append("non-finite branch-gap score")
+    if abs(best_row["shift_frames"]) > max_abs_shift_frames:
+        reasons.append("best shift exceeds %.2f frames" % max_abs_shift_frames)
+    if np.isclose(best_row["shift_frames"], sweep_min) or np.isclose(best_row["shift_frames"], sweep_max):
+        reasons.append("best shift is on sweep boundary")
+    if int(best_row.get("sample_bins", 0)) < min_sample_bins:
+        reasons.append("insufficient overlapping low-angle bins")
+    if np.isfinite(best_score) and np.isfinite(zero_score):
+        if zero_score - best_score < min_abs_improvement_deg:
+            reasons.append("absolute improvement below %.3f deg" % min_abs_improvement_deg)
+        if best_score > min_improvement_ratio * zero_score:
+            reasons.append("relative improvement below %.0f%%" % ((1.0 - min_improvement_ratio) * 100))
+
+    accepted = not reasons
+    selected = best_row if accepted else zero_row
+    print(
+        "%s accepted camera shift: %.3f frames / %.2f ms (%s; score %.6f -> %.6f deg)"
+        % (
+            channel_name,
+            selected["shift_frames"],
+            selected["shift_s"] * 1e3,
+            "accepted" if accepted else "rejected: " + "; ".join(reasons),
+            zero_score,
+            best_score,
+        )
+    )
+    return selected, {
+        "accepted": bool(accepted),
+        "reasons": reasons,
+        "selected": _shift_row_metadata(selected),
+        "zero_shift": _shift_row_metadata(zero_row),
+        "best_candidate": _shift_row_metadata(best_row),
+        "guardrails": {
+            "max_abs_shift_frames": float(max_abs_shift_frames),
+            "min_improvement_ratio": float(min_improvement_ratio),
+            "min_abs_improvement_deg": float(min_abs_improvement_deg),
+            "min_sample_bins": int(min_sample_bins),
+        },
+    }
 
 def _build_directional_inverse_calibration(aligned_cam_time, blue_cam_angs, red_cam_angs,
         enc_time, blue_enc_angs, red_enc_angs):
@@ -733,6 +1441,54 @@ def _build_directional_inverse_calibration(aligned_cam_time, blue_cam_angs, red_
         "red_cam_rng_res": red_cam_rng_res,
         "inv_blue": inv_blue,
         "inv_red": inv_red,
+    }
+
+def _build_time_shifted_directional_inverse_calibration(aligned_cam_time,
+        blue_cam_angs, red_cam_angs, enc_time, blue_enc_angs, red_enc_angs,
+        blue_time_shift=0.0, red_time_shift=0.0):
+    blue_cam_time = np.asarray(aligned_cam_time, dtype=float) + blue_time_shift
+    red_cam_time = np.asarray(aligned_cam_time, dtype=float) + red_time_shift
+    enc_time = np.asarray(enc_time, dtype=float)
+
+    valid_calibration_time = (
+        (enc_time >= blue_cam_time[0]) &
+        (enc_time <= blue_cam_time[-1]) &
+        (enc_time >= red_cam_time[0]) &
+        (enc_time <= red_cam_time[-1])
+    )
+    inverse_time = enc_time[valid_calibration_time]
+    blue_enc_rng = np.asarray(blue_enc_angs, dtype=float)[valid_calibration_time]
+    red_enc_rng = np.asarray(red_enc_angs, dtype=float)[valid_calibration_time]
+    if inverse_time.size < 2:
+        raise ValueError("No overlapping camera/encoder samples for shifted inverse calibration.")
+
+    blue_cam_rng_res = np.interp(inverse_time, blue_cam_time, blue_cam_angs)
+    red_cam_rng_res = np.interp(inverse_time, red_cam_time, red_cam_angs)
+    blue_direction = _motion_direction(blue_enc_rng, inverse_time)
+    red_direction = _motion_direction(red_enc_rng, inverse_time)
+
+    inv_blue = _prepare_directional_inverse_lookup(
+        blue_cam_rng_res,
+        blue_enc_rng,
+        inverse_time,
+        direction_values=blue_direction,
+    )
+    inv_red = _prepare_directional_inverse_lookup(
+        red_cam_rng_res,
+        red_enc_rng,
+        inverse_time,
+        direction_values=red_direction,
+    )
+    return {
+        "inverse_time": inverse_time,
+        "blue_enc_rng": blue_enc_rng,
+        "red_enc_rng": red_enc_rng,
+        "blue_cam_rng_res": blue_cam_rng_res,
+        "red_cam_rng_res": red_cam_rng_res,
+        "inv_blue": inv_blue,
+        "inv_red": inv_red,
+        "blue_time_shift": blue_time_shift,
+        "red_time_shift": red_time_shift,
     }
 
 def _estimate_time_correction_from_residuals(aligned_cam_time, blue_cam_cal,
@@ -1454,6 +2210,153 @@ def main(cal_folder,inner_mask,outer_mask):
             _lookup_size(inv_red, "negative"),
         )
     )
+    blue_inverse_direction = _motion_direction(blue_enc_rng, inverse_time)
+    red_inverse_direction = _motion_direction(red_enc_rng, inverse_time)
+    branch_fig, branch_axes = plt.subplots(1, 2, num=7, figsize=(14, 5), clear=True)
+    _plot_branch_separation_diagnostic(
+        branch_axes[0],
+        "blue",
+        blue_cam_rng_res,
+        blue_enc_rng,
+        blue_inverse_direction,
+        inv_blue,
+        focus_deg=20.0,
+    )
+    _plot_branch_separation_diagnostic(
+        branch_axes[1],
+        "red",
+        red_cam_rng_res,
+        red_enc_rng,
+        red_inverse_direction,
+        inv_red,
+        focus_deg=20.0,
+    )
+    branch_fig.suptitle("Low-Angle Forward/Reverse Calibration Branch Separation")
+    branch_fig.tight_layout(rect=(0, 0, 1, 0.94))
+    blue_shift_sweep = _sweep_camera_time_shift_branch_gap(
+        "blue",
+        aligned_cam_time,
+        unwrapped_blue_cam_angs,
+        new_enc_time,
+        unwrapped_blue_enc_angs,
+        focus_deg=20.0,
+    )
+    red_shift_sweep = _sweep_camera_time_shift_branch_gap(
+        "red",
+        aligned_cam_time,
+        unwrapped_red_cam_angs,
+        new_enc_time,
+        unwrapped_red_enc_angs,
+        focus_deg=20.0,
+    )
+
+    def _sweep_array(rows, key):
+        return np.asarray([row[key] for row in rows], dtype=float)
+
+    plt.figure(8)
+    plt.clf()
+    plt.plot(
+        _sweep_array(blue_shift_sweep, "shift_frames"),
+        _sweep_array(blue_shift_sweep, "lookup_p95_abs"),
+        "b",
+        label="blue lookup p95",
+    )
+    plt.plot(
+        _sweep_array(red_shift_sweep, "shift_frames"),
+        _sweep_array(red_shift_sweep, "lookup_p95_abs"),
+        "r",
+        label="red lookup p95",
+    )
+    plt.plot(
+        _sweep_array(blue_shift_sweep, "shift_frames"),
+        _sweep_array(blue_shift_sweep, "sample_p95_abs"),
+        "b--",
+        alpha=0.55,
+        label="blue sample p95",
+    )
+    plt.plot(
+        _sweep_array(red_shift_sweep, "shift_frames"),
+        _sweep_array(red_shift_sweep, "sample_p95_abs"),
+        "r--",
+        alpha=0.55,
+        label="red sample p95",
+    )
+    plt.axvline(0.0, color="0.4", linewidth=1)
+    plt.xlabel("Camera time shift (frames at 30 FPS)")
+    plt.ylabel("Forward/reverse branch gap p95 (deg)")
+    plt.title("Low-Angle Branch Gap vs Camera-Time Shift")
+    plt.grid(True, alpha=0.25)
+    plt.legend()
+    blue_best_shift, blue_shift_metadata = _select_accepted_time_shift(
+        "blue",
+        blue_shift_sweep,
+    )
+    red_best_shift, red_shift_metadata = _select_accepted_time_shift(
+        "red",
+        red_shift_sweep,
+    )
+    shifted_inverse_calibration = _build_time_shifted_directional_inverse_calibration(
+        aligned_cam_time,
+        unwrapped_blue_cam_angs,
+        unwrapped_red_cam_angs,
+        new_enc_time,
+        unwrapped_blue_enc_angs,
+        unwrapped_red_enc_angs,
+        blue_time_shift=blue_best_shift["shift_s"],
+        red_time_shift=red_best_shift["shift_s"],
+    )
+    shifted_blue_metrics = _branch_gap_metrics(
+        shifted_inverse_calibration["blue_cam_rng_res"],
+        shifted_inverse_calibration["blue_enc_rng"],
+        _motion_direction(
+            shifted_inverse_calibration["blue_enc_rng"],
+            shifted_inverse_calibration["inverse_time"],
+        ),
+        focus_deg=20.0,
+    )
+    shifted_red_metrics = _branch_gap_metrics(
+        shifted_inverse_calibration["red_cam_rng_res"],
+        shifted_inverse_calibration["red_enc_rng"],
+        _motion_direction(
+            shifted_inverse_calibration["red_enc_rng"],
+            shifted_inverse_calibration["inverse_time"],
+        ),
+        focus_deg=20.0,
+    )
+    print(
+        "time-shift corrected maps: blue shift %.3f frames / %.2f ms, red shift %.3f frames / %.2f ms"
+        % (
+            blue_best_shift["shift_frames"],
+            blue_best_shift["shift_s"] * 1e3,
+            red_best_shift["shift_frames"],
+            red_best_shift["shift_s"] * 1e3,
+        )
+    )
+    print(
+        "time-shift corrected low-angle lookup p95: blue %.6f deg, red %.6f deg"
+        % (
+            shifted_blue_metrics["lookup_p95_abs"],
+            shifted_red_metrics["lookup_p95_abs"],
+        )
+    )
+    time_shift_metadata = {
+        "method": "branch_gap_time_shift",
+        "focus_deg": 20.0,
+        "sweep_frames": 2.0,
+        "frame_rate": 30.0,
+        "n_steps": 41,
+        "blue": blue_shift_metadata,
+        "red": red_shift_metadata,
+    }
+
+    inverse_calibration = shifted_inverse_calibration
+    inverse_time = inverse_calibration["inverse_time"]
+    blue_enc_rng = inverse_calibration["blue_enc_rng"]
+    red_enc_rng = inverse_calibration["red_enc_rng"]
+    blue_cam_rng_res = inverse_calibration["blue_cam_rng_res"]
+    red_cam_rng_res = inverse_calibration["red_cam_rng_res"]
+    inv_blue = inverse_calibration["inv_blue"]
+    inv_red = inverse_calibration["inv_red"]
 
     # plt.legend([
     #     # 'red_cam_angs', 'blue_cam_angs',
@@ -1490,6 +2393,48 @@ def main(cal_folder,inner_mask,outer_mask):
         )
     _save_directional_inverse_model(cal_folder + '/inv_blue_directional.npz', inv_blue)
     _save_directional_inverse_model(cal_folder + '/inv_red_directional.npz', inv_red)
+    with open(cal_folder + '/inverse_time_shift_metadata.json', 'w') as f:
+        json.dump(time_shift_metadata, f, indent=2)
+    smooth_blue_cal = _fit_smooth_camera_calibration(blue_cam_rng_res, blue_enc_rng)
+    smooth_red_cal = _fit_smooth_camera_calibration(red_cam_rng_res, red_enc_rng)
+    _save_smooth_camera_calibration(cal_folder + '/smooth_blue_cal.npz', smooth_blue_cal)
+    _save_smooth_camera_calibration(cal_folder + '/smooth_red_cal.npz', smooth_red_cal)
+    print(
+        "smooth calibration: blue degree=%d affine slope=%.8f r=%.9f, red degree=%d affine slope=%.8f r=%.9f"
+        % (
+            smooth_blue_cal["degree"],
+            smooth_blue_cal["affine_slope_diagnostic"],
+            smooth_blue_cal["affine_r_diagnostic"],
+            smooth_red_cal["degree"],
+            smooth_red_cal["affine_slope_diagnostic"],
+            smooth_red_cal["affine_r_diagnostic"],
+        )
+    )
+    blue_svd_cal = _fit_svd_inverse_model(
+        blue_cam_rng_res,
+        blue_enc_rng,
+        inverse_time,
+        direction_values=_motion_direction(blue_enc_rng, inverse_time),
+    )
+    red_svd_cal = _fit_svd_inverse_model(
+        red_cam_rng_res,
+        red_enc_rng,
+        inverse_time,
+        direction_values=_motion_direction(red_enc_rng, inverse_time),
+    )
+    _save_svd_inverse_model(cal_folder + '/svd_blue_cal.npz', blue_svd_cal)
+    _save_svd_inverse_model(cal_folder + '/svd_red_cal.npz', red_svd_cal)
+    print(
+        "SVD candidate calibration: blue degree=%d p95=%.6f deg val_p95=%.6f deg, red degree=%d p95=%.6f deg val_p95=%.6f deg"
+        % (
+            blue_svd_cal["degree"],
+            blue_svd_cal["fit_p95_abs_deg"],
+            blue_svd_cal["validation_p95_abs_deg"],
+            red_svd_cal["degree"],
+            red_svd_cal["fit_p95_abs_deg"],
+            red_svd_cal["validation_p95_abs_deg"],
+        )
+    )
 
     plt.figure(4)
     plt.plot(blue_cam_rng_res,blue_enc_rng-blue_cam_rng_res,'b')
@@ -1513,6 +2458,80 @@ def main(cal_folder,inner_mask,outer_mask):
     blue_cam_ang_cal_plot = blue_cam_ang_cal[valid_aligned]
     red_enc_ang_res = np.interp(plot_time, new_enc_time, new_red_enc_angs)
     blue_enc_ang_res = np.interp(plot_time, new_enc_time, new_blue_enc_angs)
+    shifted_eval_valid = (
+        (plot_time >= aligned_cam_time[0] + blue_best_shift["shift_s"]) &
+        (plot_time <= aligned_cam_time[-1] + blue_best_shift["shift_s"]) &
+        (plot_time >= aligned_cam_time[0] + red_best_shift["shift_s"]) &
+        (plot_time <= aligned_cam_time[-1] + red_best_shift["shift_s"])
+    )
+    shifted_blue_residual_deg = np.full(plot_time.shape, np.nan, dtype=float)
+    shifted_red_residual_deg = np.full(plot_time.shape, np.nan, dtype=float)
+    shifted_deflection_residual_deg = np.full(plot_time.shape, np.nan, dtype=float)
+    svd_blue_residual_deg = np.full(plot_time.shape, np.nan, dtype=float)
+    svd_red_residual_deg = np.full(plot_time.shape, np.nan, dtype=float)
+    svd_deflection_residual_deg = np.full(plot_time.shape, np.nan, dtype=float)
+    if np.count_nonzero(shifted_eval_valid) > 2:
+        shifted_plot_time = plot_time[shifted_eval_valid]
+        shifted_blue_cam_values = np.interp(
+            shifted_plot_time,
+            aligned_cam_time + blue_best_shift["shift_s"],
+            unwrapped_blue_cam_angs,
+        )
+        shifted_red_cam_values = np.interp(
+            shifted_plot_time,
+            aligned_cam_time + red_best_shift["shift_s"],
+            unwrapped_red_cam_angs,
+        )
+        shifted_blue_cal = _apply_directional_inverse_lookup(
+            shifted_blue_cam_values,
+            shifted_plot_time,
+            shifted_inverse_calibration["inv_blue"],
+        )
+        shifted_red_cal = _apply_directional_inverse_lookup(
+            shifted_red_cam_values,
+            shifted_plot_time,
+            shifted_inverse_calibration["inv_red"],
+        )
+        svd_blue_cal = _apply_svd_inverse_model(
+            shifted_blue_cam_values,
+            shifted_plot_time,
+            blue_svd_cal,
+        )
+        svd_red_cal = _apply_svd_inverse_model(
+            shifted_red_cam_values,
+            shifted_plot_time,
+            red_svd_cal,
+        )
+        shifted_blue_residual_deg[shifted_eval_valid] = (
+            shifted_blue_cal
+            - np.interp(shifted_plot_time, new_enc_time, new_blue_enc_angs)
+        ) * 180 / np.pi
+        shifted_red_residual_deg[shifted_eval_valid] = (
+            shifted_red_cal
+            - np.interp(shifted_plot_time, new_enc_time, new_red_enc_angs)
+        ) * 180 / np.pi
+        shifted_deflection_residual_deg[shifted_eval_valid] = (
+            (shifted_blue_cal - shifted_red_cal)
+            - (
+                np.interp(shifted_plot_time, new_enc_time, new_blue_enc_angs)
+                - np.interp(shifted_plot_time, new_enc_time, new_red_enc_angs)
+            )
+        ) * 180 / np.pi
+        svd_blue_residual_deg[shifted_eval_valid] = (
+            svd_blue_cal
+            - np.interp(shifted_plot_time, new_enc_time, new_blue_enc_angs)
+        ) * 180 / np.pi
+        svd_red_residual_deg[shifted_eval_valid] = (
+            svd_red_cal
+            - np.interp(shifted_plot_time, new_enc_time, new_red_enc_angs)
+        ) * 180 / np.pi
+        svd_deflection_residual_deg[shifted_eval_valid] = (
+            (svd_blue_cal - svd_red_cal)
+            - (
+                np.interp(shifted_plot_time, new_enc_time, new_blue_enc_angs)
+                - np.interp(shifted_plot_time, new_enc_time, new_red_enc_angs)
+            )
+        ) * 180 / np.pi
     plt.figure(5)
     plt.plot(plot_time_rel, 
              red_cam_ang_cal_plot, 'r')
@@ -1526,24 +2545,43 @@ def main(cal_folder,inner_mask,outer_mask):
     plt.figure(6)
     red_residual = red_cam_ang_cal_plot - red_enc_ang_res
     blue_residual = blue_cam_ang_cal_plot - blue_enc_ang_res
+    deflection_enc_res = blue_enc_ang_res - red_enc_ang_res
+    deflection_residual = (blue_cam_ang_cal_plot - red_cam_ang_cal_plot) - deflection_enc_res
     red_residual_deg = red_residual * 180 / np.pi
     blue_residual_deg = blue_residual * 180 / np.pi
+    deflection_residual_deg = deflection_residual * 180 / np.pi
     blue_plot_direction = _motion_direction(unwrapped_blue_cam_angs[valid_aligned], plot_time)
     red_plot_direction = _motion_direction(unwrapped_red_cam_angs[valid_aligned], plot_time)
-    _print_residual_stats("blue all deg", blue_residual_deg)
-    _print_residual_stats("blue positive deg", blue_residual_deg, blue_plot_direction > 0)
-    _print_residual_stats("blue negative deg", blue_residual_deg, blue_plot_direction < 0)
-    _print_residual_stats("red all deg", red_residual_deg)
-    _print_residual_stats("red positive deg", red_residual_deg, red_plot_direction > 0)
-    _print_residual_stats("red negative deg", red_residual_deg, red_plot_direction < 0)
+    _print_residual_stats("unshifted evaluation blue all deg", blue_residual_deg)
+    _print_residual_stats("unshifted evaluation blue positive deg", blue_residual_deg, blue_plot_direction > 0)
+    _print_residual_stats("unshifted evaluation blue negative deg", blue_residual_deg, blue_plot_direction < 0)
+    _print_residual_stats("unshifted evaluation red all deg", red_residual_deg)
+    _print_residual_stats("unshifted evaluation red positive deg", red_residual_deg, red_plot_direction > 0)
+    _print_residual_stats("unshifted evaluation red negative deg", red_residual_deg, red_plot_direction < 0)
+    _print_residual_stats("absolute blue-red deflection all deg", deflection_residual_deg)
+    _print_residual_stats("time-shift corrected blue all deg", shifted_blue_residual_deg)
+    _print_residual_stats("time-shift corrected red all deg", shifted_red_residual_deg)
+    _print_residual_stats("time-shift corrected blue-red deflection all deg", shifted_deflection_residual_deg)
+    _print_residual_stats("SVD candidate blue all deg", svd_blue_residual_deg)
+    _print_residual_stats("SVD candidate red all deg", svd_red_residual_deg)
+    _print_residual_stats("SVD candidate blue-red deflection all deg", svd_deflection_residual_deg)
     plt.plot(plot_time_rel, 
-             red_residual_deg, 'r')
+             shifted_red_residual_deg, 'r')
     plt.plot(plot_time_rel,
-             blue_residual_deg, 'b')
-    plt.legend(['red residual', 'blue residual'])
+             shifted_blue_residual_deg, 'b')
+    plt.plot(plot_time_rel,
+             shifted_deflection_residual_deg, 'k')
+    plt.plot(plot_time_rel,
+             svd_deflection_residual_deg, color='tab:green')
+    plt.legend([
+        'red residual',
+        'blue residual',
+        'blue-red deflection residual',
+        'SVD candidate blue-red deflection residual',
+    ])
     plt.xlabel('Time (s)')
     plt.ylabel('Camera inverse minus encoder (deg)')
-    plt.title('Direction-aware inverse mapping residual')
+    plt.title('Time-shift corrected direction-aware inverse mapping residual')
     plt.show()
 
 
