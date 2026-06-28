@@ -26,6 +26,13 @@ FREQUENCY = 200
 DT = 1 / FREQUENCY
 WAIT = 3
 
+# Hard safety limits. These match the Pi5 stiffness tests and are independent
+# from the calibration trajectory.
+MOTOR_CURRENT_SAFETY_LIMIT_A = 8.5
+WINDING_TEMPERATURE_SAFETY_LIMIT_C = 90.0
+BATTERY_VOLTAGE_MAX_V = 43.0
+BATTERY_VOLTAGE_MIN_V = 25.0
+
 PIN_FALLING = 6
 PIN_END = 26
 
@@ -33,6 +40,46 @@ VOLT = 2000 # in mV
 DIRECTION = 1
 FLAG = 1
 cnt = 0
+
+
+def _get_joint_temperature(joint):
+    if hasattr(joint, "winding_temperature"):
+        return joint.winding_temperature
+    if hasattr(joint, "case_temperature"):
+        return joint.case_temperature
+    return None
+
+
+def check_joint_safety(joint, name):
+    temperature = _get_joint_temperature(joint)
+    if (
+        temperature is not None
+        and temperature > WINDING_TEMPERATURE_SAFETY_LIMIT_C
+    ):
+        raise ValueError("{} motor above thermal limit: {} C".format(name, temperature))
+
+    battery_voltage_v = joint.battery_voltage / 1000
+    if battery_voltage_v > BATTERY_VOLTAGE_MAX_V:
+        print("{} voltage {}".format(name, battery_voltage_v))
+        raise ValueError(
+            "{} battery voltage above {} V".format(name, BATTERY_VOLTAGE_MAX_V)
+        )
+    if battery_voltage_v < BATTERY_VOLTAGE_MIN_V:
+        print("{} voltage {}".format(name, battery_voltage_v))
+        raise ValueError(
+            "{} battery voltage below {} V".format(name, BATTERY_VOLTAGE_MIN_V)
+        )
+
+    motor_current_a = joint.motor_current / 1000
+    if np.abs(motor_current_a) > MOTOR_CURRENT_SAFETY_LIMIT_A:
+        raise ValueError(
+            "{} motor current too high: {} A".format(name, motor_current_a)
+        )
+
+
+def check_safety(osl):
+    check_joint_safety(osl.knee, "knee")
+    check_joint_safety(osl.ankle, "ankle")
 
 # GPIO.setmode(GPIO.BCM)
 # GPIO.setup(PIN_FALLING, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
@@ -79,6 +126,7 @@ try:
             ff = 0,
         )
         osl.update()
+        check_safety(osl)
         init_pos_left = osl.ankle.output_position
         init_pos_right = osl.knee.output_position
         osl.ankle.set_output_position(position=init_pos_left)
@@ -92,6 +140,7 @@ try:
         
         for t in osl.clock:
             osl.update()
+            check_safety(osl)
             
             if t < WAIT:
                 position_command = 0
@@ -112,6 +161,7 @@ try:
         for t in osl.clock:
             # tau_futek = torque_sensor_thread.get_latest_torque()
             osl.update()
+            check_safety(osl)
             if t > WAIT:
                 break
         

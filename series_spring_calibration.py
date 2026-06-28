@@ -29,9 +29,16 @@ GR_BOSTONGEAR = 50  # Gear Ratio from Boston Gear
 
 T = 10  # Period Time
 TIME_TO_STEP = 1.0
-FREQUENCY = 200
+FREQUENCY = 500
 DT = 1 / FREQUENCY
 WAIT = 3
+
+# Hard safety limits. These match the Pi5 stiffness tests and are independent
+# from the calibration trajectory.
+MOTOR_CURRENT_SAFETY_LIMIT_A = 8.5
+WINDING_TEMPERATURE_SAFETY_LIMIT_C = 90.0
+BATTERY_VOLTAGE_MAX_V = 43.0
+BATTERY_VOLTAGE_MIN_V = 25.0
 
 PIN_FALLING = 6
 PIN_END = 26
@@ -52,6 +59,46 @@ ACTUATOR_PORTS = {
     "knee": "/dev/ttyACM0",
     "ankle": "/dev/ttyACM1",
 }
+
+
+def _get_actuator_temperature(actuator):
+    if hasattr(actuator, "winding_temperature"):
+        return actuator.winding_temperature
+    if hasattr(actuator, "case_temperature"):
+        return actuator.case_temperature
+    return None
+
+
+def check_actuator_safety(actuator, tag):
+    temperature = _get_actuator_temperature(actuator)
+    if (
+        temperature is not None
+        and temperature > WINDING_TEMPERATURE_SAFETY_LIMIT_C
+    ):
+        raise ValueError("{} motor above thermal limit: {} C".format(tag, temperature))
+
+    battery_voltage_v = actuator.battery_voltage / 1000
+    if battery_voltage_v > BATTERY_VOLTAGE_MAX_V:
+        print("{} voltage {}".format(tag, battery_voltage_v))
+        raise ValueError(
+            "{} battery voltage above {} V".format(tag, BATTERY_VOLTAGE_MAX_V)
+        )
+    if battery_voltage_v < BATTERY_VOLTAGE_MIN_V:
+        print("{} voltage {}".format(tag, battery_voltage_v))
+        raise ValueError(
+            "{} battery voltage below {} V".format(tag, BATTERY_VOLTAGE_MIN_V)
+        )
+
+    motor_current_a = actuator.motor_current / 1000
+    if np.abs(motor_current_a) > MOTOR_CURRENT_SAFETY_LIMIT_A:
+        raise ValueError(
+            "{} motor current too high: {} A".format(tag, motor_current_a)
+        )
+
+
+def check_safety(active_actuators):
+    for tag, actuator in active_actuators.items():
+        check_actuator_safety(actuator, tag)
 
 
 def port_is_accessible(port):
@@ -197,6 +244,7 @@ try:
             )
 
         osl.update()
+        check_safety(osl.actuators)
         init_knee_position = knee.output_position if has_knee else 0.0
         init_ankle_position = ankle.output_position if has_ankle else 0.0
 
@@ -210,6 +258,7 @@ try:
 
         for t in clock:
             osl.update()
+            check_safety(osl.actuators)
             # tau_futek = torque_sensor_thread.get_latest_torque()
 
             if t < WAIT:
@@ -233,6 +282,7 @@ try:
 
         for t in clock:
             osl.update()
+            check_safety(osl.actuators)
             # tau_futek = torque_sensor_thread.get_latest_torque()
             logger.update()
 

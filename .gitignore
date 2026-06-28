@@ -21,3 +21,5 @@ time_elapse.py
 test.py# pixi environments
 .pixi/*
 !.pixi/config.toml
+
+*.npz

@@ -118,7 +118,7 @@ def check_safety(knee, tau_futek):
 if __name__ == "__main__":
     validate_test_config()
 
-    file_name = "Stiffness_Measure_" + strftime("%y%m%d_%H%M%S")
+    file_name = "Stiffness_CyclicMax_" + strftime("%y%m%d_%H%M%S")
     video_file_name = file_name + ".h264"
 
     if not port_is_accessible(KNEE_PORT):
